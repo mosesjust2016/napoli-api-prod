@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    ports:
+      - "5004:5000"
+    environment:
+      - FLASK_APP=app.py
+      - FLASK_ENV=development
+      - DB_USERNAME=napoliuser
+      - DB_PASSWORD=napolipassword
+      - DB_HOST=db
+      - DB_NAME=napoliapidb
+      - ENVIRONMENT=Development  # Fixed spelling
+      - DB_PORT=3306
+      - RECREATE_DB=false  # Add this to prevent data loss
+      - SECRET_KEY=your-secret-key-change-in-production
+    volumes:
+      - .:/app
+    depends_on:
+      - db
+    container_name: napoliapi-web
+
+  db:
+    image: mysql:8.0
+    environment:
+      - MYSQL_DATABASE=napoliapidb
+      - MYSQL_USER=napoliuser
+      - MYSQL_PASSWORD=napolipassword
+      - MYSQL_ROOT_PASSWORD=rootpassword
+    ports:
+      - "3309:3306"
+    command: --default-authentication-plugin=mysql_native_password
+    volumes:
+      - napoliapi_mysql_data:/var/lib/mysql
+      - ./docker/mysql-init:/docker-entrypoint-initdb.d
+    container_name: napoliapi-db
+
+volumes:
+  napoliapi_mysql_data:

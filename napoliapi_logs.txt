@@ -1,0 +1,118 @@
+⏳ Waiting for MySQL to be ready...
+✅ MySQL is up - checking database...
+📦 Importing all models...
+✅ All models imported
+🔧 Initializing extensions...
+📋 Registering blueprints...
+✅ All blueprints registered
+
+==================================================
+🔍 CHECKING DATABASE CONFIGURATION
+==================================================
+Environment: Development
+Database: napoliapidb
+Host: db:3306
+User: napoliuser
+
+🔌 Testing database connection...
+✅ Database connection successful
+
+📋 Checking registered models...
+Tables in metadata: ['user_roles', 'role_permissions', 'companies', 'disciplinary_records', 'employee_documents', 'employees', 'hr_actions', 'leave_records', 'token_blacklist', 'password_reset_tokens', 'audit_logs', 'users', 'roles', 'permissions']
+✅ Found 14 tables in metadata
+
+📊 Existing tables in database: ['audit_logs', 'companies', 'disciplinary_records', 'employee_documents', 'employees', 'hr_actions', 'leave_records', 'password_reset_tokens', 'permissions', 'role_permissions', 'roles', 'token_blacklist', 'user_roles', 'users']
+
+ℹ️  All tables exist - skipping table creation
+ℹ️  Set RECREATE_DB=true to force recreation
+ℹ️  Use Flask-Migrate for schema changes in production
+
+👤 Checking for initial data...
+ℹ️  Data already exists (1 users, 2 roles). Skipping initial data creation.
+📊 Final state: 1 users, 2 roles in database
+
+==================================================
+✅ DATABASE SETUP COMPLETE
+==================================================
+
+📦 Importing all models...
+✅ All models imported
+🔧 Initializing extensions...
+📋 Registering blueprints...
+✅ All blueprints registered
+
+==================================================
+🔍 CHECKING DATABASE CONFIGURATION
+==================================================
+Environment: Development
+Database: napoliapidb
+Host: db:3306
+User: napoliuser
+
+🔌 Testing database connection...
+✅ Database connection successful
+
+📋 Checking registered models...
+Tables in metadata: ['user_roles', 'role_permissions', 'companies', 'disciplinary_records', 'employee_documents', 'employees', 'hr_actions', 'leave_records', 'token_blacklist', 'password_reset_tokens', 'audit_logs', 'users', 'roles', 'permissions']
+✅ Found 14 tables in metadata
+
+📊 Existing tables in database: ['audit_logs', 'companies', 'disciplinary_records', 'employee_documents', 'employees', 'hr_actions', 'leave_records', 'password_reset_tokens', 'permissions', 'role_permissions', 'roles', 'token_blacklist', 'user_roles', 'users']
+
+ℹ️  All tables exist - skipping table creation
+ℹ️  Set RECREATE_DB=true to force recreation
+ℹ️  Use Flask-Migrate for schema changes in production
+
+👤 Checking for initial data...
+ℹ️  Data already exists (1 users, 2 roles). Skipping initial data creation.
+📊 Final state: 1 users, 2 roles in database
+
+==================================================
+✅ DATABASE SETUP COMPLETE
+==================================================
+
+🔍 Checking current database state...
+✅ Database connection successful
+📊 Existing tables: ['audit_logs', 'companies', 'disciplinary_records', 'employee_documents', 'employees', 'hr_actions', 'leave_records', 'password_reset_tokens', 'permissions', 'role_permissions', 'roles', 'token_blacklist', 'user_roles', 'users']
+ℹ️  Tables already exist. Skipping table creation.
+👤 Checking for initial data...
+ℹ️  Data already exists (1 users, 2 roles). Skipping initial data creation.
+📊 Final state: 1 users, 2 roles in database
+✅ Database initialization completed successfully!
+🚀 Starting Flask...
+📦 Importing all models...
+✅ All models imported
+🔧 Initializing extensions...
+📋 Registering blueprints...
+✅ All blueprints registered
+
+==================================================
+🔍 CHECKING DATABASE CONFIGURATION
+==================================================
+Environment: Development
+Database: napoliapidb
+Host: db:3306
+User: napoliuser
+
+🔌 Testing database connection...
+✅ Database connection successful
+
+📋 Checking registered models...
+Tables in metadata: ['user_roles', 'role_permissions', 'companies', 'disciplinary_records', 'employee_documents', 'employees', 'hr_actions', 'leave_records', 'token_blacklist', 'password_reset_tokens', 'audit_logs', 'users', 'roles', 'permissions']
+✅ Found 14 tables in metadata
+
+📊 Existing tables in database: ['audit_logs', 'companies', 'disciplinary_records', 'employee_documents', 'employees', 'hr_actions', 'leave_records', 'password_reset_tokens', 'permissions', 'role_permissions', 'roles', 'token_blacklist', 'user_roles', 'users']
+
+ℹ️  All tables exist - skipping table creation
+ℹ️  Set RECREATE_DB=true to force recreation
+ℹ️  Use Flask-Migrate for schema changes in production
+
+👤 Checking for initial data...
+ℹ️  Data already exists (1 users, 2 roles). Skipping initial data creation.
+📊 Final state: 1 users, 2 roles in database
+
+==================================================
+✅ DATABASE SETUP COMPLETE
+==================================================
+
+ * Serving Flask app 'app.py'
+ * Debug mode: off
