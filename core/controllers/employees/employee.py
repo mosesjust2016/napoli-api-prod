@@ -449,6 +449,8 @@ class EmployeeResponseSchema(BaseModel):
     created_at: str = Field(..., description="Creation timestamp")
     updated_at: str = Field(..., description="Update timestamp")
     company_name: Optional[str] = Field(None, description="Company name")
+    nationality: Optional[str] = Field(None, description="Nationality")
+
 
 class EmployeeCreateSchema(BaseModel):
     first_name: str = Field(..., min_length=1, description="First name")
@@ -462,8 +464,11 @@ class EmployeeCreateSchema(BaseModel):
     work_permit_valid_from: Optional[str] = Field(None, description="Work permit valid from date - required if identity_type is Work Permit")
     work_permit_valid_to: Optional[str] = Field(None, description="Work permit valid to date - required if identity_type is Work Permit")
     
+    # Nationality field for conditional validation
+    nationality: str = Field("Zambia", description="Nationality of the employee")  # Changed default to "Zambia"
+    
     gender: str = Field(..., description="Gender")
-    phone: Optional[Union[str, int]] = Field(None, description="Phone")
+    phone: Optional[str] = Field(None, description="Phone")
     personal_email: Optional[EmailStr] = Field(None, description="Personal email")
     address: Optional[str] = Field(None, description="Address")
     marital_status: Optional[str] = Field(None, description="Marital status")
@@ -482,14 +487,14 @@ class EmployeeCreateSchema(BaseModel):
     salary_currency: str = Field("ZMW", description="Salary currency")
     payment_frequency: str = Field("Monthly", description="Payment frequency")
     bank_name: Optional[str] = Field(None, description="Bank name")
-    bank_account: Optional[Union[str, int]] = Field(None, description="Bank account")
+    bank_account: Optional[str] = Field(None, description="Bank account")
     tax_id: Optional[str] = Field(None, description="Tax ID")
     pension_number: Optional[str] = Field(None, description="Pension number")
     generate_documents: Optional[bool] = Field(True, description="Generate onboarding documents")
 
     # Emergency contact fields
     emergency_contact_name: Optional[str] = Field("Not Provided", description="Emergency contact name")
-    emergency_contact_phone: Optional[Union[str, int]] = Field("Not Provided", description="Emergency contact phone")
+    emergency_contact_phone: Optional[str] = Field("Not Provided", description="Emergency contact phone")
     emergency_contact_relationship: Optional[str] = Field("Not Provided", description="Emergency contact relationship")
     
     # Email is now optional and will be generated if not provided
@@ -500,8 +505,8 @@ class EmployeeCreateSchema(BaseModel):
     napsa_number: Optional[str] = Field(None, description="NAPSA number")
     nhima_number: Optional[str] = Field(None, description="NHIMA number")
     tpin: Optional[str] = Field(None, description="TPIN number")
-    account_number: Optional[Union[str, int]] = Field(None, description="Bank account number")
-    sort_code: Optional[Union[str, int]] = Field(None, description="Bank sort code")
+    account_number: Optional[str] = Field(None, description="Bank account number")
+    sort_code: Optional[str] = Field(None, description="Bank sort code")
     next_of_kin: Optional[str] = Field(None, description="Next of kin")
     physical_address: Optional[str] = Field(None, description="Physical address")
 
@@ -519,8 +524,8 @@ class EmployeeCreateSchema(BaseModel):
     spouse_name: Optional[str] = Field(None, description="Spouse name")
     children: Optional[str] = Field(None, description="Children details")
 
-    # Documents field - NEW: Added for document handling
-    documents: Optional[Dict[str, Any]] = Field(None, description="Employee documents")
+    # Documents field
+    documents: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Employee documents")
 
     # Validators to convert integers to strings for phone and account fields
     @field_validator('phone', 'emergency_contact_phone', 'bank_account', 'account_number', 'sort_code', mode='before')
@@ -530,16 +535,9 @@ class EmployeeCreateSchema(BaseModel):
             return v
         return str(v)
 
-    @field_validator('email')
+    @field_validator('email', 'personal_email')
     @classmethod
     def email_to_lowercase(cls, v):
-        if v:
-            return v.strip().lower()
-        return v
-
-    @field_validator('personal_email')
-    @classmethod
-    def personal_email_to_lowercase(cls, v):
         if v:
             return v.strip().lower()
         return v
@@ -547,188 +545,98 @@ class EmployeeCreateSchema(BaseModel):
     @field_validator('identity_type')
     @classmethod
     def validate_identity_type(cls, v):
-        valid_types = ['NRC', 'Work Permit', 'nrc', 'work permit', 'work_permit']
+        valid_types = ['NRC', 'Work Permit']
         if v not in valid_types:
-            raise ValueError(f'Identity type must be one of: NRC, Work Permit')
-        # Normalize to standard format
-        if v.lower() in ['work permit', 'work_permit']:
-            return 'Work Permit'
-        return 'NRC'
-
-    @field_validator('work_permit_valid_from', 'work_permit_valid_to')
-    @classmethod
-    def validate_work_permit_dates_required(cls, v, info):
-        """Validate that work permit dates are provided for work permit type"""
-        data = info.data
-        field_name = info.field_name
-        
-        if data.get('identity_type') == 'Work Permit':
-            if not v:
-                raise ValueError(f'Work permit {field_name.split("_")[-1]} date is required when identity type is Work Permit')
+            raise ValueError(f'Identity type must be one of: {", ".join(valid_types)}')
         return v
 
-    @field_validator('work_permit_valid_to')
+    @field_validator('nationality')
     @classmethod
-    def validate_work_permit_dates(cls, v, info):
-        """Validate that work_permit_valid_to is after work_permit_valid_from"""
-        data = info.data
-        valid_from = data.get('work_permit_valid_from')
-        valid_to = v
-        
-        if data.get('identity_type') == 'Work Permit' and valid_from and valid_to:
-            try:
-                valid_from_date = datetime.strptime(valid_from, '%Y-%m-%d').date()
-                valid_to_date = datetime.strptime(valid_to, '%Y-%m-%d').date()
-                if valid_to_date <= valid_from_date:
-                    raise ValueError('Work permit valid to date must be after valid from date')
-            except ValueError:
-                # Let the date format validation handle invalid formats
-                pass
+    def validate_nationality(cls, v):
+        if not v:
+            return "Zambia"
         return v
 
+    # FIXED: Employment type validator to match database ENUM
     @field_validator('employment_type')
     @classmethod
     def validate_employment_type(cls, v):
-        valid_types = ['FULL-TIME', 'PART-TIME', 'CONTRACT', 'PERMANENT', 'Full-time', 'Part-time', 'Contract', 'Permanent']
-        if v not in valid_types:
-            raise ValueError(f'Employment type must be one of: {", ".join(valid_types)}')
-        # Normalize to standard format
-        if v.upper() == 'PERMANENT':
-            return 'Full-time'
-        return v
-
-    @field_validator('employment_status')
-    @classmethod
-    def validate_employment_status(cls, v):
-        valid_statuses = ['Active', 'Probation', 'Inactive', 'Expired Contract']
-        if v not in valid_statuses:
-            raise ValueError(f'Employment status must be one of: {", ".join(valid_statuses)}')
-        return v
-
-    @field_validator('gender')
-    @classmethod
-    def validate_gender(cls, v):
-        valid_genders = ['Male', 'Female', 'Other', 'male', 'female', 'other']
-        if v not in valid_genders:
-            raise ValueError(f'Gender must be one of: Male, Female, Other')
-        # Normalize to title case
-        return v.title()
-
-    @field_validator('payment_frequency')
-    @classmethod
-    def validate_payment_frequency(cls, v):
-        valid_frequencies = ['Monthly', 'Bi-weekly', 'Weekly', 'monthly', 'bi-weekly', 'weekly']
-        if v not in valid_frequencies:
-            raise ValueError(f'Payment frequency must be one of: Monthly, Bi-weekly, Weekly')
-        # Normalize to title case
-        return v.title()
-
-    @field_validator('marital_status')
-    @classmethod
-    def validate_marital_status(cls, v):
         if v is None:
             return v
-        valid_statuses = ['Single', 'Married', 'Divorced', 'Widowed', 'single', 'married', 'divorced', 'widowed']
-        if v not in valid_statuses:
-            raise ValueError(f'Marital status must be one of: Single, Married, Divorced, Widowed')
-        # Normalize to title case
-        return v.title()
-
-    @model_validator(mode='before')
-    @classmethod
-    def validate_dates(cls, data):
-        """Validate all date fields with flexible format handling including Excel serial numbers"""
-        if not isinstance(data, dict):
-            return data
-            
-        date_fields = ['date_of_birth', 'start_date', 'end_date', 'probation_end_date', 'contract_end_date', 'work_permit_valid_from', 'work_permit_valid_to']
-        date_formats = [
-            '%Y-%m-%d',  # 2024-01-15
-            '%m/%d/%Y',  # 01/15/2024
-            '%d/%m/%Y',  # 15/01/2024
-            '%d-%m-%Y',  # 15-01-2024
-            '%m-%d-%Y',  # 01-15-2024
-            '%Y/%m/%d',  # 2024/01/15
+                
+        valid_types = [
+            'FULL-TIME', 'PART-TIME', 'CONTRACT', 'PERMANENT', 
+            'Full-time', 'Part-time', 'Contract', 'Permanent',
+            'FIXED-TERM', 'Fixed Term', 'Fixed-Term', 'FIXED TERM',
+            'INTERN', 'Intern', 'APPRENTICE', 'Apprentice',
+            'CONSULTANT', 'Consultant',
+            'PROBATION', 'Probation'
         ]
-        
-        for field in date_fields:
-            if field in data and data[field]:
-                date_value = data[field]
-                
-                # Convert to string if it's not already
-                if not isinstance(date_value, str):
-                    date_value = str(date_value)
-                
-                parsed = False
-                
-                # First try to parse as Excel serial number
-                try:
-                    # Excel serial numbers are days since 1900-01-01
-                    # But Excel incorrectly treats 1900 as a leap year, so we need to adjust
-                    excel_serial = float(date_value)
-                    if 0 <= excel_serial <= 100000:  # Reasonable range for dates
-                        # Excel base date is 1900-01-01, but it has a bug treating 1900 as leap year
-                        # So we use 1899-12-30 as base to match Excel's behavior
-                        base_date = datetime(1899, 12, 30)
-                        parsed_date = base_date + timedelta(days=excel_serial)
-                        
-                        # Convert to standard date string and update the data
-                        data[field] = parsed_date.strftime('%Y-%m-%d')
-                        parsed = True
-                        print(f"DEBUG: Converted Excel serial {excel_serial} to {data[field]}")
-                except (ValueError, TypeError):
-                    pass
-                
-                # If not an Excel serial, try standard date formats
-                if not parsed:
-                    for date_format in date_formats:
-                        try:
-                            datetime.strptime(date_value, date_format)
-                            parsed = True
-                            break
-                        except ValueError:
-                            continue
-                
-                if not parsed:
-                    raise ValueError(f'{field} must be in a valid date format (YYYY-MM-DD, MM/DD/YYYY, etc.) or Excel serial number. Received: {date_value}')
-        
-        return data
+
+        if v not in valid_types:
+            raise ValueError(f'Employment type must be one of: {", ".join(valid_types)}')
+
+        # Normalize to match the database ENUM exactly
+        v_lower = v.lower()
+        if v_lower in ['permanent', 'full-time', 'fulltime']:
+            return 'Full-time'
+        elif v_lower in ['part-time', 'parttime']:
+            return 'Part-time'
+        elif v_lower in ['contract']:
+            return 'Contract'
+        elif v_lower in ['fixed-term', 'fixed term', 'fixed_term']:
+            return 'Fixed-Term'  # This matches your database ENUM exactly
+        elif v_lower in ['intern', 'internship']:
+            return 'Intern'
+        elif v_lower in ['apprentice', 'apprenticeship']:
+            return 'Apprentice'
+        elif v_lower in ['consultant', 'consultancy']:
+            return 'Consultant'
+        elif v_lower in ['probation']:
+            return 'Probation'
+        return v
 
     @model_validator(mode='after')
-    def validate_identity_documents(self):
-        """Validate identity document requirements"""
-        if self.identity_type == 'NRC':
+    def validate_all_fields(self):
+        """Comprehensive validation for all fields"""
+        # Normalize nationality check
+        is_zambian = self.nationality.lower() in ['zambia', 'zambian']
+        
+        # Validate identity type matches nationality
+        if is_zambian:
+            if self.identity_type != 'NRC':
+                raise ValueError('Zambian employees must use NRC as identity type')
             if not self.national_id:
-                raise ValueError('National ID is required when identity type is NRC')
-            # Clear work permit fields for NRC
+                raise ValueError('National ID is required for Zambian employees')
+            # Clear work permit fields for Zambians
             self.work_permit_number = None
             self.work_permit_valid_from = None
             self.work_permit_valid_to = None
-        elif self.identity_type == 'Work Permit':
+        else:
+            if self.identity_type != 'Work Permit':
+                raise ValueError('Non-Zambian employees must use Work Permit as identity type')
             if not self.work_permit_number:
-                raise ValueError('Work Permit Number is required when identity type is Work Permit')
-            if not self.work_permit_valid_from:
-                raise ValueError('Work Permit valid from date is required when identity type is Work Permit')
-            if not self.work_permit_valid_to:
-                raise ValueError('Work Permit valid to date is required when identity type is Work Permit')
-            # Clear national_id for Work Permit
+                raise ValueError('Work Permit Number is required for non-Zambian employees')
+            # Clear national_id for non-Zambians
             self.national_id = None
-        
-        return self
 
-    @model_validator(mode='after')
-    def set_defaults(self):
-        """Set default values for required fields that might be missing"""
-        # Generate email if not provided
+        # Set default email if not provided
         if not self.email:
             email_username = f"{self.first_name.lower().replace(' ', '.')}.{self.last_name.lower()}"
             self.email = f"{email_username}@company.com"
-        
+
         # Set default department if not provided
         if not self.department:
             self.department = "General"
-            
+
+        # Ensure documents is never None
+        if self.documents is None:
+            self.documents = {}
+
         return self
+
+    class Config:
+        extra = 'ignore'  # Ignore extra fields in the input
 
 class EmployeeUpdateSchema(BaseModel):
     first_name: Optional[str] = Field(None, min_length=1, description="First name")
@@ -743,6 +651,7 @@ class EmployeeUpdateSchema(BaseModel):
     work_permit_valid_from: Optional[str] = Field(None, description="Work permit valid from date")
     work_permit_valid_to: Optional[str] = Field(None, description="Work permit valid to date")
     work_permit_expiry_notified: Optional[bool] = Field(None, description="Whether work permit expiry notification was sent")
+    nationality: Optional[str] = Field(None, description="Nationality")
     gender: Optional[str] = Field(None, description="Gender")
     marital_status: Optional[str] = Field(None, description="Marital status")
     address: Optional[str] = Field(None, description="Address")
@@ -776,6 +685,46 @@ class EmployeeUpdateSchema(BaseModel):
         if v is None:
             return v
         return str(v)
+
+    # FIXED: Employment type validator to match database ENUM
+    @field_validator('employment_type')
+    @classmethod
+    def validate_employment_type(cls, v):
+        if v is None:
+            return v
+                
+        valid_types = [
+            'FULL-TIME', 'PART-TIME', 'CONTRACT', 'PERMANENT', 
+            'Full-time', 'Part-time', 'Contract', 'Permanent',
+            'FIXED-TERM', 'Fixed Term', 'Fixed-Term', 'FIXED TERM',
+            'INTERN', 'Intern', 'APPRENTICE', 'Apprentice',
+            'CONSULTANT', 'Consultant',
+            'PROBATION', 'Probation'
+        ]
+
+        if v not in valid_types:
+            raise ValueError(f'Employment type must be one of: {", ".join(valid_types)}')
+
+        # Normalize to match the database ENUM exactly
+        v_lower = v.lower()
+        if v_lower in ['permanent', 'full-time', 'fulltime']:
+            return 'Full-time'
+        elif v_lower in ['part-time', 'parttime']:
+            return 'Part-time'
+        elif v_lower in ['contract']:
+            return 'Contract'
+        elif v_lower in ['fixed-term', 'fixed term', 'fixed_term']:
+            return 'Fixed-Term'  # This matches your database ENUM exactly
+        elif v_lower in ['intern', 'internship']:
+            return 'Intern'
+        elif v_lower in ['apprentice', 'apprenticeship']:
+            return 'Apprentice'
+        elif v_lower in ['consultant', 'consultancy']:
+            return 'Consultant'
+        elif v_lower in ['probation']:
+            return 'Probation'
+        return v
+
 
 class DocumentGenerationResponse(BaseModel):
     employee_id: int = Field(..., description="Employee ID")
@@ -877,6 +826,7 @@ def get_employees():
         search = request.args.get('search', '')
         identity_type = request.args.get('identity_type', 'all')
         work_permit_status = request.args.get('work_permit_status', 'all')
+        nationality = request.args.get('nationality', 'all')
 
         # Status filter
         if status == 'active':
@@ -891,6 +841,10 @@ def get_employees():
         # Identity type filter
         if identity_type and identity_type != 'all':
             query = query.filter_by(identity_type=identity_type)
+
+        # Nationality filter
+        if nationality and nationality != 'all':
+            query = query.filter_by(nationality=nationality)
 
         # Work permit status filter
         if work_permit_status != 'all':
@@ -925,7 +879,8 @@ def get_employees():
                     Employee.national_id.ilike(search_term),
                     Employee.work_permit_number.ilike(search_term),
                     Employee.position.ilike(search_term),
-                    Employee.employee_id.ilike(search_term)  # ADDED: Search by employee_id
+                    Employee.employee_id.ilike(search_term),
+                    Employee.nationality.ilike(search_term)
                 )
             )
 
@@ -1032,23 +987,67 @@ def create_employee(body: EmployeeCreateSchema):
                     "message": "An employee with this email already exists"
                 }), 409
         
-        # Check identity document uniqueness
-        if body.identity_type == 'NRC' and body.national_id:
-            existing_national_id = Employee.query.filter_by(national_id=body.national_id).first()
-            if existing_national_id:
+        # ========== CRITICAL FIX: VALIDATE NATIONALITY AND IDENTITY TYPE MATCH ==========
+        # Check if nationality and identity type match
+        is_zambian = body.nationality and body.nationality.lower() in ['zambia', 'zambian']
+        
+        # Validate identity type based on nationality
+        if is_zambian and body.identity_type != 'NRC':
+            return jsonify({
+                "status": 400,
+                "isError": True,
+                "message": "Zambian employees must use NRC as identity type"
+            }), 400
+        
+        if not is_zambian and body.identity_type != 'Work Permit':
+            return jsonify({
+                "status": 400,
+                "isError": True,
+                "message": "Non-Zambian employees must use Work Permit as identity type"
+            }), 400
+        
+        # Check identity document uniqueness based on nationality and identity type
+        if is_zambian:
+            # For Zambians, check national_id uniqueness
+            if body.national_id:
+                existing_national_id = Employee.query.filter_by(national_id=body.national_id).first()
+                if existing_national_id:
+                    return jsonify({
+                        "status": 409,
+                        "isError": True,
+                        "message": "An employee with this National ID already exists"
+                    }), 409
+            # For Zambians, national_id should be provided
+            if not body.national_id:
                 return jsonify({
-                    "status": 409,
+                    "status": 400,
                     "isError": True,
-                    "message": "An employee with this National ID already exists"
-                }), 409
-        elif body.identity_type == 'Work Permit' and body.work_permit_number:
-            existing_work_permit = Employee.query.filter_by(work_permit_number=body.work_permit_number).first()
-            if existing_work_permit:
+                    "message": "National ID is required for Zambian employees"
+                }), 400
+        else:
+            # For non-Zambians, check work permit uniqueness
+            if body.work_permit_number:
+                existing_work_permit = Employee.query.filter_by(work_permit_number=body.work_permit_number).first()
+                if existing_work_permit:
+                    return jsonify({
+                        "status": 409,
+                        "isError": True,
+                        "message": "An employee with this Work Permit Number already exists"
+                    }), 409
+            # For non-Zambians, work_permit_number should be provided
+            if not body.work_permit_number:
                 return jsonify({
-                    "status": 409,
+                    "status": 400,
                     "isError": True,
-                    "message": "An employee with this Work Permit Number already exists"
-                }), 409
+                    "message": "Work Permit Number is required for non-Zambian employees"
+                }), 400
+            # For non-Zambians, work permit dates should be provided
+            if not body.work_permit_valid_from or not body.work_permit_valid_to:
+                return jsonify({
+                    "status": 400,
+                    "isError": True,
+                    "message": "Work Permit valid from and valid to dates are required for non-Zambian employees"
+                }), 400
 
         # Parse dates using the updated parse_date function
         date_of_birth = parse_date(body.date_of_birth)
@@ -1057,10 +1056,10 @@ def create_employee(body: EmployeeCreateSchema):
         probation_end_date = parse_date(body.probation_end_date) if body.probation_end_date else None
         contract_end_date = parse_date(body.contract_end_date) if body.contract_end_date else None
         
-        # Parse work permit dates
+        # Parse work permit dates for non-Zambians
         work_permit_valid_from = None
         work_permit_valid_to = None
-        if body.identity_type == 'Work Permit':
+        if not is_zambian and body.identity_type == 'Work Permit':
             work_permit_valid_from = parse_date(body.work_permit_valid_from) if body.work_permit_valid_from else None
             work_permit_valid_to = parse_date(body.work_permit_valid_to) if body.work_permit_valid_to else None
 
@@ -1084,6 +1083,7 @@ def create_employee(body: EmployeeCreateSchema):
             work_permit_valid_from=work_permit_valid_from,
             work_permit_valid_to=work_permit_valid_to,
             work_permit_expiry_notified=False,
+            nationality=body.nationality,
             
             # Additional fields
             middle_name=body.middle_name,
@@ -1104,13 +1104,13 @@ def create_employee(body: EmployeeCreateSchema):
             company_id=body.company_id,
             department=body.department,
             position=body.position,
-            employment_type=body.employment_type,
+            employment_type=body.employment_type,  # This will now be properly normalized
             employment_status=body.employment_status,
             start_date=start_date,
             end_date=end_date,
             probation_end_date=probation_end_date,
             contract_end_date=contract_end_date,
-            supervisor_id=body.supervisor_id,  # Now validated above
+            supervisor_id=body.supervisor_id,
             work_location=body.work_location,
             salary=salary,
             salary_currency=body.salary_currency,
@@ -1125,7 +1125,7 @@ def create_employee(body: EmployeeCreateSchema):
         db.session.add(employee)
         db.session.flush()  # This gets the employee ID without committing
         
-        # ========== NEW: HANDLE UPLOADED DOCUMENTS ==========
+        # ========== HANDLE UPLOADED DOCUMENTS ==========
         if body.documents:
             try:
                 saved_documents = handle_employee_documents(
@@ -1207,7 +1207,7 @@ def create_employee(body: EmployeeCreateSchema):
             employee_id=employee.id,
             action="CREATE",
             performed_by=current_user_id,
-            details=f"Employee {employee.employee_id} created successfully with identity type: {employee.identity_type}"
+            details=f"Employee {employee.employee_id} created successfully with nationality: {employee.nationality}, identity type: {employee.identity_type}"
         )
         db.session.add(audit)
         db.session.commit()
@@ -1228,6 +1228,7 @@ def create_employee(body: EmployeeCreateSchema):
             "isError": True,
             "message": f"Error creating employee: {str(e)}"
         }), 500
+
 
 @employee_bp.get('/documents/<path:filename>')
 @jwt_required()
@@ -1326,41 +1327,62 @@ def update_employee(path: EmployeeIdPath, body: EmployeeUpdateSchema):
                         "message": f"Invalid date format for {field}: {str(e)}"
                     }), 400
 
-        # Handle identity type changes and validation
+        # Handle identity type changes and validation based on nationality
+        current_nationality = update_data.get('nationality', employee.nationality)
+        is_zambian = current_nationality.lower() == 'zambian' if current_nationality else employee.nationality.lower() == 'zambian'
+        
         if 'identity_type' in update_data:
             new_identity_type = update_data['identity_type']
-            if new_identity_type == 'NRC':
+            if is_zambian:
+                # For Zambians, only NRC is allowed
+                if new_identity_type == 'Work Permit':
+                    return jsonify({
+                        "status": 400,
+                        "isError": True,
+                        "message": "Zambian employees must use NRC as identity type"
+                    }), 400
+                
                 # Clear work permit fields when switching to NRC
                 update_data['work_permit_number'] = None
                 update_data['work_permit_valid_from'] = None
                 update_data['work_permit_valid_to'] = None
                 update_data['work_permit_expiry_notified'] = False
-                if not update_data.get('national_id'):
+                
+                if not update_data.get('national_id') and not employee.national_id:
                     return jsonify({
                         "status": 400,
                         "isError": True,
-                        "message": "National ID is required when identity type is NRC"
+                        "message": "National ID is required for Zambian employees"
                     }), 400
-            elif new_identity_type == 'Work Permit':
+            else:
+                # For non-Zambians, work permit is required
+                if new_identity_type != 'Work Permit':
+                    return jsonify({
+                        "status": 400,
+                        "isError": True,
+                        "message": "Non-Zambian employees must use Work Permit as identity type"
+                    }), 400
+                
                 # Clear national_id when switching to Work Permit
                 update_data['national_id'] = None
-                if not update_data.get('work_permit_number'):
+                
+                if not update_data.get('work_permit_number') and not employee.work_permit_number:
                     return jsonify({
                         "status": 400,
                         "isError": True,
-                        "message": "Work Permit Number is required when identity type is Work Permit"
+                        "message": "Work Permit Number is required for non-Zambian employees"
                     }), 400
-                if not update_data.get('work_permit_valid_from'):
+                if not update_data.get('work_permit_valid_from') and not employee.work_permit_valid_from:
                     return jsonify({
                         "status": 400,
                         "isError": True,
-                        "message": "Work Permit valid from date is required when identity type is Work Permit"
+                        "message": "Work Permit valid from date is required for non-Zambian employees"
                     }), 400
-                if not update_data.get('work_permit_valid_to'):
+                if not update_data.get('work_permit_valid_to') and not employee.work_permit_valid_to:
                     return jsonify({
                         "status": 400,
                         "isError": True,
-                        "message": "Work Permit valid to date is required when identity type is Work Permit"
+                        "message": "Work Permit valid to date is required for non-Zambian employees"
                     }), 400
 
         # Update employee fields
@@ -1595,33 +1617,39 @@ def bulk_create_employees(body: BulkEmployeeCreateSchema):
                         results["failed"] += 1
                         continue
 
-                # Check identity document uniqueness
-                if employee_data.identity_type == 'NRC' and employee_data.national_id:
-                    existing_national_id = Employee.query.filter_by(national_id=employee_data.national_id).first()
-                    if existing_national_id:
-                        error_msg = f"An employee with National ID {employee_data.national_id} already exists"
-                        if not body.skip_errors:
-                            raise ValueError(error_msg)
-                        results["errors"].append({
-                            "index": index,
-                            "employee_name": f"{employee_data.first_name} {employee_data.last_name}",
-                            "error": error_msg
-                        })
-                        results["failed"] += 1
-                        continue
-                elif employee_data.identity_type == 'Work Permit' and employee_data.work_permit_number:
-                    existing_work_permit = Employee.query.filter_by(work_permit_number=employee_data.work_permit_number).first()
-                    if existing_work_permit:
-                        error_msg = f"An employee with Work Permit Number {employee_data.work_permit_number} already exists"
-                        if not body.skip_errors:
-                            raise ValueError(error_msg)
-                        results["errors"].append({
-                            "index": index,
-                            "employee_name": f"{employee_data.first_name} {employee_data.last_name}",
-                            "error": error_msg
-                        })
-                        results["failed"] += 1
-                        continue
+                # Check identity document uniqueness based on nationality
+                is_zambian = employee_data.nationality.lower() == 'zambian'
+                
+                if is_zambian:
+                    # For Zambians, check national_id uniqueness
+                    if employee_data.national_id:
+                        existing_national_id = Employee.query.filter_by(national_id=employee_data.national_id).first()
+                        if existing_national_id:
+                            error_msg = f"An employee with National ID {employee_data.national_id} already exists"
+                            if not body.skip_errors:
+                                raise ValueError(error_msg)
+                            results["errors"].append({
+                                "index": index,
+                                "employee_name": f"{employee_data.first_name} {employee_data.last_name}",
+                                "error": error_msg
+                            })
+                            results["failed"] += 1
+                            continue
+                else:
+                    # For non-Zambians, check work permit uniqueness
+                    if employee_data.work_permit_number:
+                        existing_work_permit = Employee.query.filter_by(work_permit_number=employee_data.work_permit_number).first()
+                        if existing_work_permit:
+                            error_msg = f"An employee with Work Permit Number {employee_data.work_permit_number} already exists"
+                            if not body.skip_errors:
+                                raise ValueError(error_msg)
+                            results["errors"].append({
+                                "index": index,
+                                "employee_name": f"{employee_data.first_name} {employee_data.last_name}",
+                                "error": error_msg
+                            })
+                            results["failed"] += 1
+                            continue
 
                 # Parse dates using the updated parse_date function
                 date_of_birth = parse_date(employee_data.date_of_birth)
@@ -1630,10 +1658,10 @@ def bulk_create_employees(body: BulkEmployeeCreateSchema):
                 probation_end_date = parse_date(employee_data.probation_end_date) if employee_data.probation_end_date else None
                 contract_end_date = parse_date(employee_data.contract_end_date) if employee_data.contract_end_date else None
                 
-                # Parse work permit dates
+                # Parse work permit dates for non-Zambians
                 work_permit_valid_from = None
                 work_permit_valid_to = None
-                if employee_data.identity_type == 'Work Permit':
+                if not is_zambian and employee_data.identity_type == 'Work Permit':
                     work_permit_valid_from = parse_date(employee_data.work_permit_valid_from) if employee_data.work_permit_valid_from else None
                     work_permit_valid_to = parse_date(employee_data.work_permit_valid_to) if employee_data.work_permit_valid_to else None
 
@@ -1657,6 +1685,7 @@ def bulk_create_employees(body: BulkEmployeeCreateSchema):
                     work_permit_valid_from=work_permit_valid_from,
                     work_permit_valid_to=work_permit_valid_to,
                     work_permit_expiry_notified=False,
+                    nationality=employee_data.nationality,
                     
                     # Additional fields
                     middle_name=employee_data.middle_name,
@@ -1776,7 +1805,7 @@ def bulk_create_employees(body: BulkEmployeeCreateSchema):
                     employee_id=employee.id,
                     action="CREATE",
                     performed_by=current_user_id,
-                    details=f"Employee {employee.employee_id} created via bulk upload with identity type: {employee.identity_type}"
+                    details=f"Employee {employee.employee_id} created via bulk upload with nationality: {employee.nationality}, identity type: {employee.identity_type}"
                 )
                 db.session.add(audit)
                 
@@ -1792,7 +1821,8 @@ def bulk_create_employees(body: BulkEmployeeCreateSchema):
                     "name": f"{employee.first_name} {employee.last_name}",
                     "email": employee.email,
                     "position": employee.position,
-                    "department": employee.department
+                    "department": employee.department,
+                    "nationality": employee.nationality
                 })
                 results["successful"] += 1
                 
@@ -1873,11 +1903,12 @@ def get_bulk_upload_template():
                 "work_permit_number": None,
                 "work_permit_valid_from": None,
                 "work_permit_valid_to": None,
+                "nationality": "Zambian",
                 
                 "company_id": 1,
                 "department": "IT Department",
                 "position": "Software Engineer",
-                "employment_type": "Full-time",
+                "employment_type": "Fixed Term",
                 "employment_status": "Active",
                 "start_date": "2025-11-01",
                 "end_date": None,
@@ -1926,9 +1957,11 @@ def get_bulk_upload_template():
     return jsonify({
         "template": template,
         "instructions": {
-            "required_fields": ["first_name", "last_name", "date_of_birth", "gender", "company_id", "position", "department", "employment_type", "start_date"],
+            "required_fields": ["first_name", "last_name", "date_of_birth", "gender", "company_id", "position", "department", "employment_type", "start_date", "nationality"],
             "optional_fields": "All other fields are optional including documents",
-            "identity_documents": "Provide either national_id (for NRC) or work_permit_number with dates (for Work Permit)",
+            "identity_documents": "Provide national_id for Zambians or work_permit_number with dates for non-Zambians",
+            "employment_types": "Allowed values: Full-time, Part-time, Contract, Permanent, Fixed Term, Intern, Apprentice, Consultant",
+            "nationality": "Use 'Zambian' for Zambian citizens, any other nationality for non-Zambians",
             "documents": "All document fields are optional. Supported formats: PNG, JPG, JPEG, PDF",
             "max_file_size": "10MB per document",
             "max_employees": "100 per bulk upload"
@@ -1944,17 +1977,19 @@ def get_expiring_work_permits():
         today = datetime.now().date()
         thirty_days_from_now = today + timedelta(days=30)
         
-        # Employees with expired work permits
+        # Employees with expired work permits (non-Zambians only)
         expired_employees = Employee.query.filter(
             Employee.identity_type == 'Work Permit',
+            Employee.nationality != 'Zambian',
             Employee.work_permit_valid_to < today,
             Employee.work_permit_expiry_notified == False,
             Employee.employment_status.in_(['Active', 'Probation'])
         ).all()
         
-        # Employees with work permits expiring within 30 days
+        # Employees with work permits expiring within 30 days (non-Zambians only)
         expiring_soon_employees = Employee.query.filter(
             Employee.identity_type == 'Work Permit',
+            Employee.nationality != 'Zambian',
             Employee.work_permit_valid_to >= today,
             Employee.work_permit_valid_to <= thirty_days_from_now,
             Employee.work_permit_expiry_notified == False,
@@ -1992,11 +2027,11 @@ def mark_work_permit_expiry_notified(path: EmployeeIdPath):
                 "message": "Employee not found"
             }), 404
 
-        if employee.identity_type != 'Work Permit':
+        if employee.identity_type != 'Work Permit' or employee.nationality.lower() == 'zambian':
             return jsonify({
                 "status": 400,
                 "isError": True,
-                "message": "Employee does not have a work permit"
+                "message": "Employee does not have a work permit or is Zambian"
             }), 400
 
         employee.work_permit_expiry_notified = True

@@ -24,7 +24,24 @@ from core.models.auditLogModel import AuditLog
 hr_actions_bp = APIBlueprint('hr_actions', __name__, url_prefix='/api/hr-actions')
 hr_actions_tag = Tag(name="HR Actions", description="HR actions and workflow operations")
 
-# ---------------------- SCHEMAS ---------------------- #
+# ---------------------- PATH PARAMETER SCHEMAS ---------------------- #
+class EmployeeIdPath(BaseModel):
+    employee_id: int = Field(..., description="Employee ID")
+
+class HRActionIdPath(BaseModel):
+    action_id: str = Field(..., description="HR Action ID")
+
+# ---------------------- QUERY PARAMETER SCHEMAS ---------------------- #
+class HRActionsQuery(BaseModel):
+    action_type: Optional[str] = Field(None, description="Filter by action type")
+    status: Optional[str] = Field(None, description="Filter by status")
+    company_id: Optional[str] = Field(None, description="Filter by company ID")
+    start_date: Optional[str] = Field(None, description="Filter by start date")
+    end_date: Optional[str] = Field(None, description="Filter by end date")
+    page: int = Field(1, description="Page number")
+    per_page: int = Field(20, description="Items per page")
+
+# ---------------------- REQUEST SCHEMAS ---------------------- #
 class UpdateProfileSchema(BaseModel):
     employee_id: int = Field(..., description="Employee ID")
     update_type: str = Field(..., description="Type of update: personal, contact, emergency, documents")
@@ -113,8 +130,42 @@ class ExitProcessSchema(BaseModel):
     exit_interview: Optional[Dict[str, Any]] = Field(None, description="Exit interview details")
     comments: Optional[str] = Field(None, description="Additional comments")
 
+class CreateHRActionSchema(BaseModel):
+    employee_id: int = Field(..., description="Employee ID")
+    action_type: str = Field(..., description="Type of HR action")
+    effective_date: str = Field(..., description="Effective date for the action")
+    summary: str = Field(..., description="Action summary")
+    details: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Action details")
+    status: str = Field("completed", description="Action status")
+    requires_approval: bool = Field(False, description="Whether approval is required")
+    comments: Optional[str] = Field(None, description="Additional comments")
+    disciplinary_data: Optional[Dict[str, Any]] = Field(None, description="Disciplinary action data")
+    leave_data: Optional[Dict[str, Any]] = Field(None, description="Leave action data")
+
+# ---------------------- RESPONSE SCHEMAS ---------------------- #
+class SuccessResponse(BaseModel):
+    status: int = Field(200, description="HTTP status code")
+    data: Optional[Dict[str, Any]] = Field(None, description="Response data")
+    message: str = Field(..., description="Response message")
+
+class ErrorResponse(BaseModel):
+    status: int = Field(..., description="HTTP status code")
+    error: str = Field(..., description="Error description")
+    message: str = Field(..., description="Error message")
+
+class HRActionsListResponse(BaseModel):
+    status: int = Field(200, description="HTTP status code")
+    data: List[Dict[str, Any]] = Field(..., description="List of HR actions")
+    pagination: Dict[str, Any] = Field(..., description="Pagination information")
+    message: str = Field(..., description="Response message")
+
 # ---------------------- 1. UPDATE EMPLOYEE PROFILE ---------------------- #
-@hr_actions_bp.post('/update-profile', tags=[hr_actions_tag])
+@hr_actions_bp.post(
+    '/update-profile',
+    tags=[hr_actions_tag],
+    responses={200: SuccessResponse, 400: ErrorResponse, 404: ErrorResponse, 500: ErrorResponse},
+    security=[{"jwt": []}]
+)
 @jwt_required()
 def update_employee_profile(body: UpdateProfileSchema):
     """Update employee personal, contact, emergency contact, or document details"""
@@ -205,7 +256,12 @@ def update_employee_profile(body: UpdateProfileSchema):
         }), 500
 
 # ---------------------- 2. CHANGE EMPLOYMENT STATUS ---------------------- #
-@hr_actions_bp.post('/change-status', tags=[hr_actions_tag])
+@hr_actions_bp.post(
+    '/change-status',
+    tags=[hr_actions_tag],
+    responses={200: SuccessResponse, 400: ErrorResponse, 404: ErrorResponse, 500: ErrorResponse},
+    security=[{"jwt": []}]
+)
 @jwt_required()
 def change_employment_status(body: ChangeStatusSchema):
     """Change employee employment status with automatic notice period calculation"""
@@ -288,7 +344,12 @@ def change_employment_status(body: ChangeStatusSchema):
         }), 500
 
 # ---------------------- 3. UPDATE CONTRACT ---------------------- #
-@hr_actions_bp.post('/update-contract', tags=[hr_actions_tag])
+@hr_actions_bp.post(
+    '/update-contract',
+    tags=[hr_actions_tag],
+    responses={200: SuccessResponse, 400: ErrorResponse, 404: ErrorResponse, 500: ErrorResponse},
+    security=[{"jwt": []}]
+)
 @jwt_required()
 def update_employee_contract(body: UpdateContractSchema):
     """Update employee contract details (job title, department, company, supervisor, location)"""
@@ -383,7 +444,12 @@ def update_employee_contract(body: UpdateContractSchema):
         }), 500
 
 # ---------------------- 4. CHANGE SALARY ---------------------- #
-@hr_actions_bp.post('/change-salary', tags=[hr_actions_tag])
+@hr_actions_bp.post(
+    '/change-salary',
+    tags=[hr_actions_tag],
+    responses={200: SuccessResponse, 400: ErrorResponse, 404: ErrorResponse, 500: ErrorResponse},
+    security=[{"jwt": []}]
+)
 @jwt_required()
 def change_employee_salary(body: ChangeSalarySchema):
     """Adjust employee salary with director approval workflow"""
@@ -476,7 +542,12 @@ def change_employee_salary(body: ChangeSalarySchema):
         }), 500
 
 # ---------------------- 5. RECORD LEAVE ---------------------- #
-@hr_actions_bp.post('/leave/record', tags=[hr_actions_tag])
+@hr_actions_bp.post(
+    '/leave/record',
+    tags=[hr_actions_tag],
+    responses={200: SuccessResponse, 400: ErrorResponse, 404: ErrorResponse, 500: ErrorResponse},
+    security=[{"jwt": []}]
+)
 @jwt_required()
 def record_employee_leave(body: RecordLeaveSchema):
     """Record all types of employee leave (annual, sick, maternity, etc.)"""
@@ -574,7 +645,12 @@ def record_employee_leave(body: RecordLeaveSchema):
         }), 500
 
 # ---------------------- 6. COMMUTE LEAVE ---------------------- #
-@hr_actions_bp.post('/leave/commute', tags=[hr_actions_tag])
+@hr_actions_bp.post(
+    '/leave/commute',
+    tags=[hr_actions_tag],
+    responses={200: SuccessResponse, 400: ErrorResponse, 404: ErrorResponse, 500: ErrorResponse},
+    security=[{"jwt": []}]
+)
 @jwt_required()
 def commute_employee_leave(body: CommuteLeaveSchema):
     """Commute annual leave to cash payment"""
@@ -672,7 +748,12 @@ def commute_employee_leave(body: CommuteLeaveSchema):
         }), 500
 
 # ---------------------- 7. UNAUTHORIZED ABSENCE ---------------------- #
-@hr_actions_bp.post('/absence/unauthorized', tags=[hr_actions_tag])
+@hr_actions_bp.post(
+    '/absence/unauthorized',
+    tags=[hr_actions_tag],
+    responses={200: SuccessResponse, 400: ErrorResponse, 404: ErrorResponse, 500: ErrorResponse},
+    security=[{"jwt": []}]
+)
 @jwt_required()
 def record_unauthorized_absence(body: UnauthorizedAbsenceSchema):
     """Record unauthorized absence with automatic deductions"""
@@ -781,7 +862,12 @@ def record_unauthorized_absence(body: UnauthorizedAbsenceSchema):
         }), 500
 
 # ---------------------- 8. DISCIPLINARY ACTION ---------------------- #
-@hr_actions_bp.post('/disciplinary', tags=[hr_actions_tag])
+@hr_actions_bp.post(
+    '/disciplinary',
+    tags=[hr_actions_tag],
+    responses={200: SuccessResponse, 400: ErrorResponse, 404: ErrorResponse, 500: ErrorResponse},
+    security=[{"jwt": []}]
+)
 @jwt_required()
 def record_disciplinary_action(body: DisciplinaryActionSchema):
     """Record disciplinary actions with validity periods and consequences"""
@@ -887,7 +973,12 @@ def record_disciplinary_action(body: DisciplinaryActionSchema):
         }), 500
 
 # ---------------------- 9. EXIT PROCESS ---------------------- #
-@hr_actions_bp.post('/exit', tags=[hr_actions_tag])
+@hr_actions_bp.post(
+    '/exit',
+    tags=[hr_actions_tag],
+    responses={200: SuccessResponse, 400: ErrorResponse, 404: ErrorResponse, 500: ErrorResponse},
+    security=[{"jwt": []}]
+)
 @jwt_required()
 def process_employee_exit(body: ExitProcessSchema):
     """Process employee exit with final pay calculation and asset recovery"""
@@ -1012,26 +1103,20 @@ def process_employee_exit(body: ExitProcessSchema):
         }), 500
 
 # ---------------------- ORIGINAL ENDPOINTS (UPDATED WITH AUTH) ---------------------- #
-@hr_actions_bp.post('/', tags=[hr_actions_tag])
+@hr_actions_bp.post(
+    '/',
+    tags=[hr_actions_tag],
+    responses={201: SuccessResponse, 400: ErrorResponse, 404: ErrorResponse, 500: ErrorResponse},
+    security=[{"jwt": []}]
+)
 @jwt_required()
-def create_hr_action():
+def create_hr_action(body: CreateHRActionSchema):
     """Create a new HR action"""
     try:
         current_user_id = get_jwt_identity()
-        data = request.get_json()
-        
-        # Validate required fields
-        required_fields = ['employee_id', 'action_type', 'effective_date', 'summary']
-        missing_fields = [field for field in required_fields if field not in data or not data[field]]
-        if missing_fields:
-            return jsonify({
-                'status': 400,
-                'error': f'Missing required fields: {", ".join(missing_fields)}',
-                'message': 'All required fields must be provided'
-            }), 400
         
         # Validate employee exists
-        employee = Employee.query.get(data['employee_id'])
+        employee = Employee.query.get(body.employee_id)
         if not employee:
             return jsonify({
                 'status': 404,
@@ -1042,30 +1127,30 @@ def create_hr_action():
         # Create HR action
         hr_action = HRAction(
             id=str(uuid.uuid4()),
-            employee_id=data['employee_id'],
-            action_type=data['action_type'],
+            employee_id=body.employee_id,
+            action_type=body.action_type,
             action_date=datetime.now(),
-            effective_date=datetime.strptime(data['effective_date'], '%Y-%m-%d').date(),
+            effective_date=datetime.strptime(body.effective_date, '%Y-%m-%d').date(),
             performed_by=current_user_id,
-            details=data.get('details', {}),
-            summary=data['summary'],
-            status=data.get('status', 'completed'),
-            requires_approval=data.get('requires_approval', False),
-            comments=data.get('comments')
+            details=body.details,
+            summary=body.summary,
+            status=body.status,
+            requires_approval=body.requires_approval,
+            comments=body.comments
         )
         
         db.session.add(hr_action)
         
         # Handle specific action types
-        if data['action_type'] == 'disciplinary_action' and data.get('disciplinary_data'):
-            disciplinary_data = data['disciplinary_data']
+        if body.action_type == 'disciplinary_action' and body.disciplinary_data:
+            disciplinary_data = body.disciplinary_data
             disciplinary_record = DisciplinaryRecord(
                 id=str(uuid.uuid4()),
-                employee_id=data['employee_id'],
+                employee_id=body.employee_id,
                 hr_action_id=hr_action.id,
                 type=disciplinary_data['type'],
                 reason=disciplinary_data['reason'],
-                issued_date=datetime.strptime(disciplinary_data.get('issued_date', data['effective_date']), '%Y-%m-%d').date(),
+                issued_date=datetime.strptime(disciplinary_data.get('issued_date', body.effective_date), '%Y-%m-%d').date(),
                 valid_until=datetime.strptime(disciplinary_data['valid_until'], '%Y-%m-%d').date(),
                 issued_by=current_user_id,
                 document_url=disciplinary_data.get('document_url'),
@@ -1076,13 +1161,13 @@ def create_hr_action():
             # Update employee disciplinary flag
             employee.has_live_disciplinary = True
         
-        elif data['action_type'] in ['leave_maternity', 'leave_sick', 'leave_commute', 'leave_unauthorized'] and data.get('leave_data'):
-            leave_data = data['leave_data']
+        elif body.action_type in ['leave_maternity', 'leave_sick', 'leave_commute', 'leave_unauthorized'] and body.leave_data:
+            leave_data = body.leave_data
             leave_record = LeaveRecord(
                 id=str(uuid.uuid4()),
-                employee_id=data['employee_id'],
+                employee_id=body.employee_id,
                 hr_action_id=hr_action.id,
-                leave_type=data['action_type'].replace('leave_', ''),
+                leave_type=body.action_type.replace('leave_', ''),
                 start_date=datetime.strptime(leave_data['start_date'], '%Y-%m-%d').date(),
                 end_date=datetime.strptime(leave_data['end_date'], '%Y-%m-%d').date(),
                 days_count=leave_data['days_count'],
@@ -1114,13 +1199,18 @@ def create_hr_action():
             'message': 'Failed to create HR action'
         }), 500
 
-@hr_actions_bp.get('/employee/<string:employee_id>', tags=[hr_actions_tag])
+@hr_actions_bp.get(
+    '/employee/<int:employee_id>',
+    tags=[hr_actions_tag],
+    responses={200: HRActionsListResponse, 404: ErrorResponse, 500: ErrorResponse},
+    security=[{"jwt": []}]
+)
 @jwt_required()
-def get_employee_hr_actions(employee_id):
+def get_employee_hr_actions(path: EmployeeIdPath, query: HRActionsQuery):
     """Get HR actions history for an employee"""
     try:
         # Validate employee exists
-        employee = Employee.query.get(employee_id)
+        employee = Employee.query.get(path.employee_id)
         if not employee:
             return jsonify({
                 'status': 404,
@@ -1128,24 +1218,19 @@ def get_employee_hr_actions(employee_id):
                 'message': 'The specified employee does not exist'
             }), 404
         
-        # Get query parameters
-        action_type = request.args.get('action_type')
-        page = int(request.args.get('page', 1))
-        per_page = int(request.args.get('per_page', 20))
-        
         # Build query
-        query = HRAction.query.filter_by(employee_id=employee_id)
+        db_query = HRAction.query.filter_by(employee_id=path.employee_id)
         
-        if action_type:
-            query = query.filter_by(action_type=action_type)
+        if query.action_type:
+            db_query = db_query.filter_by(action_type=query.action_type)
         
         # Order by action date descending
-        query = query.order_by(HRAction.action_date.desc())
+        db_query = db_query.order_by(HRAction.action_date.desc())
         
         # Pagination
-        pagination = query.paginate(
-            page=page, 
-            per_page=per_page, 
+        pagination = db_query.paginate(
+            page=query.page, 
+            per_page=query.per_page, 
             error_out=False
         )
         
@@ -1153,8 +1238,8 @@ def get_employee_hr_actions(employee_id):
             'status': 200,
             'data': [action.to_dict() for action in pagination.items],
             'pagination': {
-                'page': page,
-                'per_page': per_page,
+                'page': query.page,
+                'per_page': query.per_page,
                 'total': pagination.total,
                 'pages': pagination.pages
             },
@@ -1168,47 +1253,43 @@ def get_employee_hr_actions(employee_id):
             'message': 'Failed to retrieve employee HR actions'
         }), 500
 
-@hr_actions_bp.get('/', tags=[hr_actions_tag])
+@hr_actions_bp.get(
+    '/',
+    tags=[hr_actions_tag],
+    responses={200: HRActionsListResponse, 500: ErrorResponse},
+    security=[{"jwt": []}]
+)
 @jwt_required()
-def get_all_hr_actions():
+def get_all_hr_actions(query: HRActionsQuery):
     """Get all HR actions with filtering"""
     try:
-        # Get query parameters
-        action_type = request.args.get('action_type')
-        status = request.args.get('status')
-        company_id = request.args.get('company_id')
-        start_date = request.args.get('start_date')
-        end_date = request.args.get('end_date')
-        page = int(request.args.get('page', 1))
-        per_page = int(request.args.get('per_page', 20))
-        
         # Build query
-        query = HRAction.query.join(Employee)
+        db_query = HRAction.query.join(Employee)
         
-        if action_type:
-            query = query.filter(HRAction.action_type == action_type)
+        if query.action_type:
+            db_query = db_query.filter(HRAction.action_type == query.action_type)
         
-        if status:
-            query = query.filter(HRAction.status == status)
+        if query.status:
+            db_query = db_query.filter(HRAction.status == query.status)
         
-        if company_id and company_id != 'all':
-            query = query.filter(Employee.company_id == company_id)
+        if query.company_id and query.company_id != 'all':
+            db_query = db_query.filter(Employee.company_id == query.company_id)
         
-        if start_date:
-            start_date_obj = datetime.strptime(start_date, '%Y-%m-%d')
-            query = query.filter(HRAction.action_date >= start_date_obj)
+        if query.start_date:
+            start_date_obj = datetime.strptime(query.start_date, '%Y-%m-%d')
+            db_query = db_query.filter(HRAction.action_date >= start_date_obj)
         
-        if end_date:
-            end_date_obj = datetime.strptime(end_date, '%Y-%m-%d')
-            query = query.filter(HRAction.action_date <= end_date_obj)
+        if query.end_date:
+            end_date_obj = datetime.strptime(query.end_date, '%Y-%m-%d')
+            db_query = db_query.filter(HRAction.action_date <= end_date_obj)
         
         # Order by action date descending
-        query = query.order_by(HRAction.action_date.desc())
+        db_query = db_query.order_by(HRAction.action_date.desc())
         
         # Pagination
-        pagination = query.paginate(
-            page=page, 
-            per_page=per_page, 
+        pagination = db_query.paginate(
+            page=query.page, 
+            per_page=query.per_page, 
             error_out=False
         )
         
@@ -1216,8 +1297,8 @@ def get_all_hr_actions():
             'status': 200,
             'data': [action.to_dict() for action in pagination.items],
             'pagination': {
-                'page': page,
-                'per_page': per_page,
+                'page': query.page,
+                'per_page': query.per_page,
                 'total': pagination.total,
                 'pages': pagination.pages
             },
@@ -1232,29 +1313,29 @@ def get_all_hr_actions():
         }), 500
 
 # ---------------------- UTILITY ENDPOINTS ---------------------- #
-@hr_actions_bp.get('/pending-approvals', tags=[hr_actions_tag])
+@hr_actions_bp.get(
+    '/pending-approvals',
+    tags=[hr_actions_tag],
+    responses={200: HRActionsListResponse, 500: ErrorResponse},
+    security=[{"jwt": []}]
+)
 @jwt_required()
-def get_pending_approvals():
+def get_pending_approvals(query: HRActionsQuery):
     """Get HR actions pending approval"""
     try:
-        # Get query parameters
-        action_type = request.args.get('action_type')
-        page = int(request.args.get('page', 1))
-        per_page = int(request.args.get('per_page', 20))
-        
         # Build query for pending approvals
-        query = HRAction.query.filter_by(status='pending_approval')
+        db_query = HRAction.query.filter_by(status='pending_approval')
         
-        if action_type:
-            query = query.filter_by(action_type=action_type)
+        if query.action_type:
+            db_query = db_query.filter_by(action_type=query.action_type)
         
         # Order by action date
-        query = query.order_by(HRAction.action_date.desc())
+        db_query = db_query.order_by(HRAction.action_date.desc())
         
         # Pagination
-        pagination = query.paginate(
-            page=page, 
-            per_page=per_page, 
+        pagination = db_query.paginate(
+            page=query.page, 
+            per_page=query.per_page, 
             error_out=False
         )
         
@@ -1262,8 +1343,8 @@ def get_pending_approvals():
             'status': 200,
             'data': [action.to_dict() for action in pagination.items],
             'pagination': {
-                'page': page,
-                'per_page': per_page,
+                'page': query.page,
+                'per_page': query.per_page,
                 'total': pagination.total,
                 'pages': pagination.pages
             },
@@ -1277,15 +1358,20 @@ def get_pending_approvals():
             'message': 'Failed to retrieve pending approvals'
         }), 500
 
-@hr_actions_bp.post('/<string:action_id>/approve', tags=[hr_actions_tag])
+@hr_actions_bp.post(
+    '/<string:action_id>/approve',
+    tags=[hr_actions_tag],
+    responses={200: SuccessResponse, 400: ErrorResponse, 404: ErrorResponse, 500: ErrorResponse},
+    security=[{"jwt": []}]
+)
 @jwt_required()
-def approve_hr_action(action_id):
+def approve_hr_action(path: HRActionIdPath):
     """Approve a pending HR action"""
     try:
         current_user_id = get_jwt_identity()
         
         # Find HR action
-        hr_action = HRAction.query.get(action_id)
+        hr_action = HRAction.query.get(path.action_id)
         if not hr_action:
             return jsonify({
                 'status': 404,

@@ -39,10 +39,19 @@ class Employee(BaseModel):
     next_of_kin = db.Column(db.String(200), nullable=True)
     physical_address = db.Column(db.Text, nullable=True)
     
-    # Enums
+    # Enums - UPDATED with expanded employment types
     gender_enum = ENUM('Male', 'Female', 'Other', name='gender_enum')
     marital_status_enum = ENUM('Single', 'Married', 'Divorced', 'Widowed', name='marital_status_enum')
-    employment_type_enum = ENUM('Full-time', 'Part-time', 'Contract', name='employment_type_enum')
+    employment_type_enum = ENUM(
+        'Full-time', 
+        'Part-time', 
+        'Contract', 
+        'Fixed-Term',      # Added
+        'Intern',          # Added
+        'Apprentice',      # Added
+        'Consultant',      # Added
+        name='employment_type_enum'
+    )
     employment_status_enum = ENUM('Active', 'Probation', 'Inactive', 'Expired Contract', name='employment_status_enum')
     payment_frequency_enum = ENUM('Monthly', 'Bi-weekly', 'Weekly', name='payment_frequency_enum')
     
@@ -102,7 +111,7 @@ class Employee(BaseModel):
         """Safe to_dict method with error handling"""
         try:
             data = {
-                'employee_id': self.employee_id,  # ADDED
+                'employee_id': self.employee_id,
                 'id': self.id,
                 'first_name': self.first_name,
                 'last_name': self.last_name,
@@ -165,7 +174,7 @@ class Employee(BaseModel):
                 today = datetime.now().date()
                 
                 # Determine primary identity number based on nationality
-                if self.nationality.lower() == 'zambian':
+                if self.nationality and self.nationality.lower() in ['zambia', 'zambian']:
                     data['primary_identity_number'] = self.national_id
                     data['identity_document_is_expired'] = False
                     data['identity_document_expires_soon'] = False
@@ -197,11 +206,14 @@ class Employee(BaseModel):
             try:
                 if hasattr(self, 'company') and self.company:
                     data['company_name'] = self.company.name
+                    data['company_code'] = self.company.company_code
                 else:
                     data['company_name'] = None
+                    data['company_code'] = None
             except Exception as e:
                 print(f"Error getting company name for employee {self.id}: {str(e)}")
                 data['company_name'] = None
+                data['company_code'] = None
             
             # Safe supervisor name access
             try:
