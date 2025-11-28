@@ -6,7 +6,6 @@ from sqlalchemy import func, desc, and_, or_
 from datetime import datetime, timedelta
 from pydantic import BaseModel, Field, EmailStr
 from typing import Optional, Dict, Any, List
-import uuid
 import json
 import os
 
@@ -29,7 +28,7 @@ class EmployeeIdPath(BaseModel):
     employee_id: int = Field(..., description="Employee ID")
 
 class HRActionIdPath(BaseModel):
-    action_id: str = Field(..., description="HR Action ID")
+    action_id: int = Field(..., description="HR Action ID")  # Changed from str to int
 
 # ---------------------- QUERY PARAMETER SCHEMAS ---------------------- #
 class HRActionsQuery(BaseModel):
@@ -216,9 +215,8 @@ def update_employee_profile(body: UpdateProfileSchema):
                     'new_value': new_value
                 })
         
-        # Create HR action record
+        # Create HR action record WITHOUT UUID
         hr_action = HRAction(
-            id=str(uuid.uuid4()),
             employee_id=body.employee_id,
             action_type='profile_update',
             action_date=datetime.now(),
@@ -299,9 +297,8 @@ def change_employment_status(body: ChangeStatusSchema):
         if body.new_status in ['Resignation', 'Termination', 'Inactive']:
             employee.end_date = final_work_date or effective_date
         
-        # Create HR action record
+        # Create HR action record WITHOUT UUID
         hr_action = HRAction(
-            id=str(uuid.uuid4()),
             employee_id=body.employee_id,
             action_type='status_change',
             action_date=datetime.now(),
@@ -405,9 +402,8 @@ def update_employee_contract(body: UpdateContractSchema):
                     'new_value': new_value
                 })
         
-        # Create HR action record
+        # Create HR action record WITHOUT UUID
         hr_action = HRAction(
-            id=str(uuid.uuid4()),
             employee_id=body.employee_id,
             action_type='contract_update',
             action_date=datetime.now(),
@@ -483,9 +479,8 @@ def change_employee_salary(body: ChangeSalarySchema):
         else:
             status = 'pending_approval'
         
-        # Create HR action record
+        # Create HR action record WITHOUT UUID
         hr_action = HRAction(
-            id=str(uuid.uuid4()),
             employee_id=body.employee_id,
             action_type='salary_change',
             action_date=datetime.now(),
@@ -578,9 +573,8 @@ def record_employee_leave(body: RecordLeaveSchema):
                 'message': 'End date must be after start date'
             }), 400
         
-        # Create leave record
+        # Create leave record WITHOUT UUID
         leave_record = LeaveRecord(
-            id=str(uuid.uuid4()),
             employee_id=body.employee_id,
             leave_type=body.leave_type,
             start_date=start_date,
@@ -592,9 +586,8 @@ def record_employee_leave(body: RecordLeaveSchema):
             comments=body.comments
         )
         
-        # Create HR action record
+        # Create HR action record WITHOUT UUID
         hr_action = HRAction(
-            id=str(uuid.uuid4()),
             employee_id=body.employee_id,
             action_type=f'leave_{body.leave_type}',
             action_date=datetime.now(),
@@ -614,10 +607,12 @@ def record_employee_leave(body: RecordLeaveSchema):
             comments=body.comments
         )
         
+        db.session.add(hr_action)
+        db.session.flush()  # Get the HR action ID
+        
         leave_record.hr_action_id = hr_action.id
         
         db.session.add(leave_record)
-        db.session.add(hr_action)
         db.session.commit()
         
         return jsonify({
@@ -682,9 +677,8 @@ def commute_employee_leave(body: CommuteLeaveSchema):
                 'message': f'Commute value should be approximately {calculated_value:.2f} based on salary'
             }), 400
         
-        # Create leave record for commutation
+        # Create leave record for commutation WITHOUT UUID
         leave_record = LeaveRecord(
-            id=str(uuid.uuid4()),
             employee_id=body.employee_id,
             leave_type='commuted',
             start_date=effective_date,
@@ -697,9 +691,8 @@ def commute_employee_leave(body: CommuteLeaveSchema):
             comments=body.comments
         )
         
-        # Create HR action record
+        # Create HR action record WITHOUT UUID
         hr_action = HRAction(
-            id=str(uuid.uuid4()),
             employee_id=body.employee_id,
             action_type='leave_commute',
             action_date=datetime.now(),
@@ -719,10 +712,12 @@ def commute_employee_leave(body: CommuteLeaveSchema):
             comments=body.comments
         )
         
+        db.session.add(hr_action)
+        db.session.flush()  # Get the HR action ID
+        
         leave_record.hr_action_id = hr_action.id
         
         db.session.add(leave_record)
-        db.session.add(hr_action)
         db.session.commit()
         
         return jsonify({
@@ -788,9 +783,8 @@ def record_unauthorized_absence(body: UnauthorizedAbsenceSchema):
         if not leave_days_deducted and body.deduction_type in ['leave', 'both']:
             leave_days_deducted = absence_days
         
-        # Create leave record for unauthorized absence
+        # Create leave record for unauthorized absence WITHOUT UUID
         leave_record = LeaveRecord(
-            id=str(uuid.uuid4()),
             employee_id=body.employee_id,
             leave_type='unauthorized',
             start_date=absence_dates[0],
@@ -804,9 +798,8 @@ def record_unauthorized_absence(body: UnauthorizedAbsenceSchema):
             comments=body.comments
         )
         
-        # Create HR action record
+        # Create HR action record WITHOUT UUID
         hr_action = HRAction(
-            id=str(uuid.uuid4()),
             employee_id=body.employee_id,
             action_type='absence_unauthorized',
             action_date=datetime.now(),
@@ -827,10 +820,12 @@ def record_unauthorized_absence(body: UnauthorizedAbsenceSchema):
             comments=body.comments
         )
         
+        db.session.add(hr_action)
+        db.session.flush()  # Get the HR action ID
+        
         leave_record.hr_action_id = hr_action.id
         
         db.session.add(leave_record)
-        db.session.add(hr_action)
         db.session.commit()
         
         # Prepare deduction summary
@@ -895,9 +890,8 @@ def record_disciplinary_action(body: DisciplinaryActionSchema):
                 'message': 'Valid until date must be after issued date'
             }), 400
         
-        # Create disciplinary record
+        # Create disciplinary record WITHOUT UUID
         disciplinary_record = DisciplinaryRecord(
-            id=str(uuid.uuid4()),
             employee_id=body.employee_id,
             type=body.action_type,
             reason=body.reason,
@@ -911,9 +905,8 @@ def record_disciplinary_action(body: DisciplinaryActionSchema):
             comments=body.comments
         )
         
-        # Create HR action record
+        # Create HR action record WITHOUT UUID
         hr_action = HRAction(
-            id=str(uuid.uuid4()),
             employee_id=body.employee_id,
             action_type='disciplinary_action',
             action_date=datetime.now(),
@@ -937,6 +930,9 @@ def record_disciplinary_action(body: DisciplinaryActionSchema):
             comments=body.comments
         )
         
+        db.session.add(hr_action)
+        db.session.flush()  # Get the HR action ID
+        
         disciplinary_record.hr_action_id = hr_action.id
         
         # Update employee disciplinary flag
@@ -944,7 +940,6 @@ def record_disciplinary_action(body: DisciplinaryActionSchema):
         employee.updated_at = datetime.now()
         
         db.session.add(disciplinary_record)
-        db.session.add(hr_action)
         db.session.commit()
         
         return jsonify({
@@ -1021,9 +1016,8 @@ def process_employee_exit(body: ExitProcessSchema):
         employee.end_date = exit_date
         employee.has_live_disciplinary = False  # Clear disciplinary flag on exit
         
-        # Create HR action record
+        # Create HR action record WITHOUT UUID
         hr_action = HRAction(
-            id=str(uuid.uuid4()),
             employee_id=body.employee_id,
             action_type='exit_processing',
             action_date=datetime.now(),
@@ -1124,9 +1118,8 @@ def create_hr_action(body: CreateHRActionSchema):
                 'message': 'The specified employee does not exist'
             }), 404
         
-        # Create HR action
+        # Create HR action WITHOUT UUID
         hr_action = HRAction(
-            id=str(uuid.uuid4()),
             employee_id=body.employee_id,
             action_type=body.action_type,
             action_date=datetime.now(),
@@ -1140,12 +1133,12 @@ def create_hr_action(body: CreateHRActionSchema):
         )
         
         db.session.add(hr_action)
+        db.session.flush()  # Get the HR action ID
         
         # Handle specific action types
         if body.action_type == 'disciplinary_action' and body.disciplinary_data:
             disciplinary_data = body.disciplinary_data
             disciplinary_record = DisciplinaryRecord(
-                id=str(uuid.uuid4()),
                 employee_id=body.employee_id,
                 hr_action_id=hr_action.id,
                 type=disciplinary_data['type'],
@@ -1164,7 +1157,6 @@ def create_hr_action(body: CreateHRActionSchema):
         elif body.action_type in ['leave_maternity', 'leave_sick', 'leave_commute', 'leave_unauthorized'] and body.leave_data:
             leave_data = body.leave_data
             leave_record = LeaveRecord(
-                id=str(uuid.uuid4()),
                 employee_id=body.employee_id,
                 hr_action_id=hr_action.id,
                 leave_type=body.action_type.replace('leave_', ''),
@@ -1359,7 +1351,7 @@ def get_pending_approvals(query: HRActionsQuery):
         }), 500
 
 @hr_actions_bp.post(
-    '/<string:action_id>/approve',
+    '/<int:action_id>/approve',  # Changed from string to int
     tags=[hr_actions_tag],
     responses={200: SuccessResponse, 400: ErrorResponse, 404: ErrorResponse, 500: ErrorResponse},
     security=[{"jwt": []}]

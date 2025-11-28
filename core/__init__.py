@@ -24,6 +24,7 @@ from core.controllers.documents.documents import documents_bp
 from core.controllers.reports.reports import reports_bp
 from core.controllers.approvals.approvals import approvals_bp
 from core.controllers.notifications.notifications import notifications_bp
+from core.controllers.attendance.attendance_payroll import attendance_bp
 
 
 def create_app():
@@ -255,6 +256,7 @@ def create_app():
     app.register_api(reports_bp)
     app.register_api(approvals_bp)
     app.register_api(notifications_bp)
+    app.register_api(attendance_bp)
     print("✅ All blueprints registered")
 
     # Default route

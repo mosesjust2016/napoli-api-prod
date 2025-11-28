@@ -22,10 +22,134 @@ from core.models.employee_documents import EmployeeDocument
 from core.models.users import User
 from core.models.auditLogModel import AuditLog
 
+# Google Drive imports
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
+import pickle
+
 employee_tag = Tag(name="Employees", description="Employee management operations")
 employee_bp = APIBlueprint(
     'employee', __name__, url_prefix='/api/employees', abp_tags=[employee_tag]
 )
+
+# ---------------------- GOOGLE DRIVE CONFIGURATION ---------------------- #
+SCOPES = ['https://www.googleapis.com/auth/drive']
+# Root folder ID for Napoli HR
+PARENT_FOLDER_ID = "1pN7V0ngbP8EMcz1FXf2QhXEiFH1gbccF"
+
+def get_drive_service():
+    """Get authenticated Google Drive service"""
+    try:
+        creds = None
+        # Token file should be in the project root or config directory
+        token_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'token.json')
+        
+        if os.path.exists(token_path):
+            creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+        
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                # For server environments, you might need service account credentials
+                # This would need to be configured based on your deployment
+                raise Exception("Google Drive credentials not configured properly")
+            
+            # Save the credentials for the next run
+            with open(token_path, 'w') as token:
+                token.write(creds.to_json())
+        
+        return build('drive', 'v3', credentials=creds)
+    except Exception as e:
+        print(f"Error initializing Google Drive service: {str(e)}")
+        # Fallback to local storage if Drive fails
+        return None
+
+def create_drive_folder(service, folder_name, parent_id=None):
+    """Create a folder in Google Drive"""
+    try:
+        if not service:
+            raise Exception("Google Drive service not available")
+            
+        file_metadata = {
+            'name': folder_name,
+            'mimeType': 'application/vnd.google-apps.folder'
+        }
+        if parent_id:
+            file_metadata['parents'] = [parent_id]
+        
+        folder = service.files().create(body=file_metadata, fields='id,name,webViewLink').execute()
+        print(f"DEBUG: Created Google Drive folder: {folder_name} with ID: {folder.get('id')}")
+        return folder
+    except Exception as e:
+        print(f"Error creating Google Drive folder: {str(e)}")
+        raise
+
+def upload_to_drive(service, file_path, file_name, parent_id=None):
+    """Upload a file to Google Drive"""
+    try:
+        if not service:
+            raise Exception("Google Drive service not available")
+            
+        file_metadata = {
+            'name': file_name
+        }
+        if parent_id:
+            file_metadata['parents'] = [parent_id]
+        
+        media = MediaFileUpload(file_path, resumable=True)
+        file = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id,name,webViewLink,webContentLink'
+        ).execute()
+        
+        print(f"DEBUG: Uploaded file to Google Drive: {file_name} with ID: {file.get('id')}")
+        return file
+    except Exception as e:
+        print(f"Error uploading file to Google Drive: {str(e)}")
+        raise
+
+def find_or_create_employee_folder(service, employee, company):
+    """Find or create employee folder structure in Google Drive"""
+    try:
+        # First, ensure company folder exists
+        company_folder_name = f"{company.name.replace(' ', '_')}_{company.id}"
+        company_folder = None
+        
+        # Search for existing company folder
+        query = f"name='{company_folder_name}' and mimeType='application/vnd.google-apps.folder' and '{PARENT_FOLDER_ID}' in parents and trashed=false"
+        results = service.files().list(q=query, fields="files(id, name)").execute()
+        folders = results.get('files', [])
+        
+        if folders:
+            company_folder = folders[0]
+        else:
+            company_folder = create_drive_folder(service, company_folder_name, PARENT_FOLDER_ID)
+        
+        # Create employee folder inside company folder
+        employee_folder_name = f"{employee.first_name}_{employee.last_name}_{employee.employee_id}".replace(' ', '_')
+        employee_folder_query = f"name='{employee_folder_name}' and mimeType='application/vnd.google-apps.folder' and '{company_folder['id']}' in parents and trashed=false"
+        employee_results = service.files().list(q=employee_folder_query, fields="files(id, name)").execute()
+        employee_folders = employee_results.get('files', [])
+        
+        if employee_folders:
+            employee_folder = employee_folders[0]
+        else:
+            employee_folder = create_drive_folder(service, employee_folder_name, company_folder['id'])
+            
+            # Create subfolders
+            subfolders = ['Personal_Documents', 'Employment_Documents', 'Certificates', 'HR_Actions']
+            for subfolder in subfolders:
+                create_drive_folder(service, subfolder, employee_folder['id'])
+        
+        return employee_folder
+        
+    except Exception as e:
+        print(f"Error creating employee folder structure in Google Drive: {str(e)}")
+        raise
 
 # ---------------------- EMPLOYEE ID GENERATION ---------------------- #
 def generate_employee_id(company_id: int) -> str:
@@ -76,9 +200,9 @@ def generate_employee_id(company_id: int) -> str:
         # Fallback: use timestamp-based ID
         return f"EMP{int(datetime.now().timestamp())}"
 
-# ---------------------- DOCUMENT HANDLING FUNCTIONS ---------------------- #
+# ---------------------- UPDATED DOCUMENT HANDLING FUNCTIONS ---------------------- #
 def create_documents_directory(employee_id: int) -> str:
-    """Create directory structure for employee documents"""
+    """Create local directory structure for employee documents (temporary storage)"""
     try:
         # Base documents directory - using Napoli HR Folders structure
         base_dir = "/app/Napoli HR Folders"
@@ -94,25 +218,110 @@ def create_documents_directory(employee_id: int) -> str:
         print(f"Error creating documents directory: {str(e)}")
         return "/app/Napoli HR Folders"
 
-def handle_employee_documents(employee_id: int, documents_data: Dict[str, Any], uploaded_by: int) -> List[EmployeeDocument]:
-    """Handle saving uploaded documents to file system and database"""
+def handle_employee_documents(employee_id: int, documents_data: Dict[str, Any], uploaded_by: int, employee, company) -> List[EmployeeDocument]:
+    """Handle saving uploaded documents to Google Drive and database"""
     saved_documents = []
     
-    # Create employee documents directory
+    try:
+        # Initialize Google Drive service
+        drive_service = get_drive_service()
+        if not drive_service:
+            print("Google Drive service not available, falling back to local storage")
+            return handle_employee_documents_local(employee_id, documents_data, uploaded_by)
+        
+        # Find or create employee folder in Google Drive
+        employee_folder = find_or_create_employee_folder(drive_service, employee, company)
+        
+        # Create temporary local directory
+        employee_dir = create_documents_directory(employee_id)
+        
+        # Document type mapping and folder mapping
+        document_type_mapping = {
+            'profilePhoto': 'id_card',
+            'nrcCopy': 'id_card',  
+            'cv': 'resume',
+            'offerLetter': 'contract',
+            'certificates': 'certificate'
+        }
+        
+        document_folder_mapping = {
+            'id_card': 'Personal_Documents',
+            'resume': 'Employment_Documents', 
+            'contract': 'Employment_Documents',
+            'certificate': 'Certificates'
+        }
+        
+        for doc_key, doc_data in documents_data.items():
+            try:
+                # Handle single documents
+                if doc_key in ['profilePhoto', 'nrcCopy', 'cv', 'offerLetter'] and doc_data:
+                    saved_doc = save_base64_document_drive(
+                        employee_id=employee_id,
+                        base64_data=doc_data,
+                        document_type=document_type_mapping[doc_key],
+                        document_name=f"{document_type_mapping[doc_key].replace('_', ' ').title()}",
+                        uploaded_by=uploaded_by,
+                        employee_dir=employee_dir,
+                        doc_key=doc_key,
+                        drive_service=drive_service,
+                        employee_folder=employee_folder,
+                        folder_mapping=document_folder_mapping
+                    )
+                    if saved_doc:
+                        saved_documents.append(saved_doc)
+                
+                # Handle certificates array
+                elif doc_key == 'certificates' and doc_data:
+                    for i, cert_data in enumerate(doc_data):
+                        if cert_data:
+                            saved_cert = save_base64_document_drive(
+                                employee_id=employee_id,
+                                base64_data=cert_data,
+                                document_type='certificate',
+                                document_name=f"Certificate {i+1}",
+                                uploaded_by=uploaded_by,
+                                employee_dir=employee_dir,
+                                doc_key=f"certificate_{i+1}",
+                                drive_service=drive_service,
+                                employee_folder=employee_folder,
+                                folder_mapping=document_folder_mapping
+                            )
+                            if saved_cert:
+                                saved_documents.append(saved_cert)
+                                
+            except Exception as e:
+                print(f"Error processing document {doc_key}: {str(e)}")
+                continue
+        
+        # Clean up temporary local files
+        try:
+            import shutil
+            shutil.rmtree(employee_dir)
+            print(f"DEBUG: Cleaned up temporary directory: {employee_dir}")
+        except Exception as cleanup_error:
+            print(f"Warning: Could not clean up temporary directory: {str(cleanup_error)}")
+                
+        return saved_documents
+        
+    except Exception as e:
+        print(f"Error in Google Drive document handling, falling back to local: {str(e)}")
+        return handle_employee_documents_local(employee_id, documents_data, uploaded_by)
+
+def handle_employee_documents_local(employee_id: int, documents_data: Dict[str, Any], uploaded_by: int) -> List[EmployeeDocument]:
+    """Fallback function to handle documents locally"""
+    saved_documents = []
     employee_dir = create_documents_directory(employee_id)
     
-    # Document type mapping - using your EmployeeDocument ENUM values
     document_type_mapping = {
-        'profilePhoto': 'id_card',  # Maps to 'id_card' in your ENUM
-        'nrcCopy': 'id_card',       # Maps to 'id_card' in your ENUM  
-        'cv': 'resume',             # Maps to 'resume' in your ENUM
-        'offerLetter': 'contract',  # Maps to 'contract' in your ENUM
-        'certificates': 'certificate' # Maps to 'certificate' in your ENUM
+        'profilePhoto': 'id_card',
+        'nrcCopy': 'id_card',  
+        'cv': 'resume',
+        'offerLetter': 'contract',
+        'certificates': 'certificate'
     }
     
     for doc_key, doc_data in documents_data.items():
         try:
-            # Handle single documents
             if doc_key in ['profilePhoto', 'nrcCopy', 'cv', 'offerLetter'] and doc_data:
                 saved_doc = save_base64_document(
                     employee_id=employee_id,
@@ -126,7 +335,6 @@ def handle_employee_documents(employee_id: int, documents_data: Dict[str, Any], 
                 if saved_doc:
                     saved_documents.append(saved_doc)
             
-            # Handle certificates array
             elif doc_key == 'certificates' and doc_data:
                 for i, cert_data in enumerate(doc_data):
                     if cert_data:
@@ -143,22 +351,21 @@ def handle_employee_documents(employee_id: int, documents_data: Dict[str, Any], 
                             saved_documents.append(saved_cert)
                             
         except Exception as e:
-            print(f"Error processing document {doc_key}: {str(e)}")
+            print(f"Error processing document {doc_key} locally: {str(e)}")
             continue
     
     return saved_documents
 
-def save_base64_document(employee_id: int, base64_data: str, document_type: str, 
-                        document_name: str, uploaded_by: int, employee_dir: str, doc_key: str) -> Optional[EmployeeDocument]:
-    """Save base64 document to file system and database"""
+def save_base64_document_drive(employee_id: int, base64_data: str, document_type: str, 
+                              document_name: str, uploaded_by: int, employee_dir: str, 
+                              doc_key: str, drive_service, employee_folder, folder_mapping) -> Optional[EmployeeDocument]:
+    """Save base64 document to Google Drive and database"""
     try:
         # Extract file extension from base64 data
         if base64_data.startswith('data:'):
-            # data:image/png;base64,iVBORw0KGgoAAA...
             header = base64_data.split(';')[0]
             mime_type = header.split(':')[1] if ':' in header else header
             
-            # Map MIME types to file extensions
             mime_to_extension = {
                 'image/png': 'png',
                 'image/jpeg': 'jpg',
@@ -169,14 +376,11 @@ def save_base64_document(employee_id: int, base64_data: str, document_type: str,
             }
             
             file_extension = mime_to_extension.get(mime_type, 'bin')
-            
-            # Extract the actual base64 data
             base64_data = base64_data.split(',')[1]
         else:
             file_extension = 'bin'
         
         # Fix base64 padding issues
-        # Add padding if necessary
         padding = len(base64_data) % 4
         if padding:
             base64_data += '=' * (4 - padding)
@@ -184,24 +388,111 @@ def save_base64_document(employee_id: int, base64_data: str, document_type: str,
         # Decode base64 data
         file_data = base64.b64decode(base64_data)
         
-        # Generate filename
+        # Generate filename and save locally temporarily
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         filename = f"{doc_key}_{employee_id}_{timestamp}.{file_extension}"
-        file_path = os.path.join(employee_dir, filename)
+        local_file_path = os.path.join(employee_dir, filename)
         
-        # Save file
-        with open(file_path, 'wb') as f:
+        # Save file locally temporarily
+        with open(local_file_path, 'wb') as f:
             f.write(file_data)
         
-        # Save to database using your EmployeeDocument model
+        # Upload to Google Drive
+        target_folder_name = folder_mapping.get(document_type, 'Personal_Documents')
+        
+        # Find the target subfolder
+        query = f"name='{target_folder_name}' and mimeType='application/vnd.google-apps.folder' and '{employee_folder['id']}' in parents and trashed=false"
+        results = drive_service.files().list(q=query, fields="files(id, name)").execute()
+        target_folders = results.get('files', [])
+        
+        if target_folders:
+            target_folder_id = target_folders[0]['id']
+        else:
+            # Create subfolder if it doesn't exist
+            target_folder = create_drive_folder(drive_service, target_folder_name, employee_folder['id'])
+            target_folder_id = target_folder['id']
+        
+        # Upload file to Google Drive
+        drive_file = upload_to_drive(drive_service, local_file_path, filename, target_folder_id)
+        
+        # Save to database with Google Drive URL
         document = EmployeeDocument(
             employee_id=employee_id,
             document_type=document_type,
             document_name=document_name,
-            file_url=file_path,  # Store the file path
+            file_url=drive_file.get('webViewLink'),  # Store Google Drive view link
+            file_drive_id=drive_file.get('id'),  # Store Google Drive file ID
             upload_date=datetime.now(),
             uploaded_by=uploaded_by,
-            is_verified=True,  # Auto-verify uploaded documents during creation
+            is_verified=True,
+            verified_by=uploaded_by,
+            comments=f"Uploaded to Google Drive during employee creation: {document_name}",
+            created_at=datetime.now(),
+            updated_at=datetime.now()
+        )
+        
+        db.session.add(document)
+        db.session.flush()
+        
+        print(f"DEBUG: Saved document {document_name} to Google Drive: {drive_file.get('webViewLink')}")
+        
+        # Clean up local file
+        try:
+            os.remove(local_file_path)
+        except Exception as cleanup_error:
+            print(f"Warning: Could not clean up local file {local_file_path}: {str(cleanup_error)}")
+        
+        return document
+        
+    except Exception as e:
+        print(f"Error saving base64 document to Google Drive {document_name}: {str(e)}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
+        return None
+
+def save_base64_document(employee_id: int, base64_data: str, document_type: str, 
+                        document_name: str, uploaded_by: int, employee_dir: str, doc_key: str) -> Optional[EmployeeDocument]:
+    """Original function for local storage (fallback)"""
+    try:
+        if base64_data.startswith('data:'):
+            header = base64_data.split(';')[0]
+            mime_type = header.split(':')[1] if ':' in header else header
+            
+            mime_to_extension = {
+                'image/png': 'png',
+                'image/jpeg': 'jpg',
+                'image/jpg': 'jpg',
+                'application/pdf': 'pdf',
+                'application/msword': 'doc',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx'
+            }
+            
+            file_extension = mime_to_extension.get(mime_type, 'bin')
+            base64_data = base64_data.split(',')[1]
+        else:
+            file_extension = 'bin'
+        
+        padding = len(base64_data) % 4
+        if padding:
+            base64_data += '=' * (4 - padding)
+        
+        file_data = base64.b64decode(base64_data)
+        
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"{doc_key}_{employee_id}_{timestamp}.{file_extension}"
+        file_path = os.path.join(employee_dir, filename)
+        
+        with open(file_path, 'wb') as f:
+            f.write(file_data)
+        
+        document = EmployeeDocument(
+            employee_id=employee_id,
+            document_type=document_type,
+            document_name=document_name,
+            file_url=file_path,
+            upload_date=datetime.now(),
+            uploaded_by=uploaded_by,
+            is_verified=True,
             verified_by=uploaded_by,
             comments=f"Uploaded during employee creation: {document_name}",
             created_at=datetime.now(),
@@ -211,62 +502,39 @@ def save_base64_document(employee_id: int, base64_data: str, document_type: str,
         db.session.add(document)
         db.session.flush()
         
-        print(f"DEBUG: Saved document {document_name} to {file_path}")
+        print(f"DEBUG: Saved document {document_name} locally to {file_path}")
         return document
         
     except Exception as e:
-        print(f"Error saving base64 document {document_name}: {str(e)}")
+        print(f"Error saving base64 document locally {document_name}: {str(e)}")
         import traceback
         print(f"Traceback: {traceback.format_exc()}")
         return None
 
-def save_document_to_database(employee_id: int, document_type: str, file_path: str, uploaded_by: int, document_name: str, comments: str = None, expiry_date: datetime = None) -> Optional[EmployeeDocument]:
-    """Save document record to database with proper ENUM values matching the table structure"""
-    try:
-        # Map document types to database ENUM values - using your EmployeeDocument ENUM
-        document_type_mapping = {
-            'new_joiner_form': 'other',  # Maps to 'other' in your ENUM
-            'employment_contract': 'contract'  # Maps to 'contract' in your ENUM
-        }
-        
-        db_document_type = document_type_mapping.get(document_type, 'other')
-        
-        document = EmployeeDocument(
-            employee_id=employee_id,
-            document_type=db_document_type,
-            document_name=document_name,
-            file_url=file_path,  # Store the actual file path
-            upload_date=datetime.now(),
-            uploaded_by=uploaded_by,
-            expiry_date=expiry_date,
-            is_verified=True,  # Auto-verify system-generated documents
-            verified_by=uploaded_by,
-            comments=comments or f"Automatically generated {document_name}",
-            created_at=datetime.now(),
-            updated_at=datetime.now()
-        )
-        
-        db.session.add(document)
-        db.session.flush()
-        print(f"DEBUG: Document saved to database: {document_name} with type: {db_document_type}")
-        return document
-        
-    except Exception as e:
-        print(f"Error saving document to database: {str(e)}")
-        db.session.rollback()
-        return None
-
 def generate_documents_from_templates(employee: Employee, company: Company, documents_data: Dict[str, Any] = None) -> Dict[str, str]:
-    """Generate documents using template files and save to employee folder"""
+    """Generate documents using template files and save to Google Drive"""
     documents_data = documents_data or {}
     
-    # Create employee folder structure
+    # Create temporary local directory
     employee_dir = create_documents_directory(employee.id)
     generated_docs = {
         'new_joiner_form': None,
         'employment_contract': None,
         'documents_folder': employee_dir
     }
+    
+    try:
+        # Initialize Google Drive service
+        drive_service = get_drive_service()
+        if drive_service:
+            employee_folder = find_or_create_employee_folder(drive_service, employee, company)
+        else:
+            employee_folder = None
+            print("Google Drive service not available, saving documents locally")
+    except Exception as e:
+        print(f"Google Drive initialization failed, using local storage: {str(e)}")
+        drive_service = None
+        employee_folder = None
     
     # Updated template paths to be relative to the project root
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
@@ -275,7 +543,6 @@ def generate_documents_from_templates(employee: Employee, company: Company, docu
     
     # Generate New Joiner Form from template
     try:
-        # Check if template exists
         if os.path.exists(new_joiner_template_path):
             new_joiner_doc = Document(new_joiner_template_path)
             
@@ -303,20 +570,42 @@ def generate_documents_from_templates(employee: Employee, company: Company, docu
                 'Children\nNames & DOB:': f'Children\nNames & DOB: {documents_data.get("children", "")}'
             }
             
-            # Replace text in paragraphs
             for paragraph in new_joiner_doc.paragraphs:
                 for old_text, new_text in new_joiner_replacements.items():
                     if old_text in paragraph.text:
                         paragraph.text = paragraph.text.replace(old_text, str(new_text))
             
-            # Save the document directly to employee folder
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             filename = f"New_Joiner_Form_{employee.id}_{timestamp}.docx"
-            new_joiner_filepath = os.path.join(employee_dir, filename)
-            new_joiner_doc.save(new_joiner_filepath)
-            generated_docs['new_joiner_form'] = new_joiner_filepath
+            local_filepath = os.path.join(employee_dir, filename)
+            new_joiner_doc.save(local_filepath)
+            generated_docs['new_joiner_form'] = local_filepath
             
-            print(f"DEBUG: New Joiner Form saved to: {new_joiner_filepath}")
+            # Upload to Google Drive if available
+            if drive_service and employee_folder:
+                try:
+                    # Find Employment_Documents folder
+                    query = f"name='Employment_Documents' and mimeType='application/vnd.google-apps.folder' and '{employee_folder['id']}' in parents and trashed=false"
+                    results = drive_service.files().list(q=query, fields="files(id, name)").execute()
+                    target_folders = results.get('files', [])
+                    
+                    if target_folders:
+                        target_folder_id = target_folders[0]['id']
+                    else:
+                        target_folder = create_drive_folder(drive_service, 'Employment_Documents', employee_folder['id'])
+                        target_folder_id = target_folder['id']
+                    
+                    drive_file = upload_to_drive(drive_service, local_filepath, filename, target_folder_id)
+                    generated_docs['new_joiner_form_drive'] = drive_file.get('webViewLink')
+                    generated_docs['new_joiner_form_drive_id'] = drive_file.get('id')
+                    
+                    # Update the file path to use Drive URL for database storage
+                    generated_docs['new_joiner_form'] = drive_file.get('webViewLink')
+                    
+                except Exception as drive_error:
+                    print(f"Failed to upload New Joiner Form to Google Drive: {str(drive_error)}")
+            
+            print(f"DEBUG: New Joiner Form saved to: {local_filepath}")
         else:
             print(f"Warning: New Joiner template not found at {new_joiner_template_path}")
         
@@ -325,7 +614,6 @@ def generate_documents_from_templates(employee: Employee, company: Company, docu
     
     # Generate Employment Contract from template
     try:
-        # Check if template exists
         if os.path.exists(contract_template_path):
             contract_doc = Document(contract_template_path)
             
@@ -367,13 +655,11 @@ def generate_documents_from_templates(employee: Employee, company: Company, docu
                 '[OR]': ''
             }
             
-            # Replace text in paragraphs
             for paragraph in contract_doc.paragraphs:
                 for old_text, new_text in contract_replacements.items():
                     if old_text in paragraph.text:
                         paragraph.text = paragraph.text.replace(old_text, str(new_text))
             
-            # Remove optional sections if not applicable
             if not fuel_allowance:
                 for paragraph in contract_doc.paragraphs:
                     if 'Fuel Allowance' in paragraph.text and not fuel_allowance:
@@ -384,21 +670,88 @@ def generate_documents_from_templates(employee: Employee, company: Company, docu
                     if 'Phone Allowance' in paragraph.text and not phone_allowance:
                         paragraph.clear()
             
-            # Save the document directly to employee folder
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             filename = f"Employment_Contract_{employee.id}_{timestamp}.docx"
-            contract_filepath = os.path.join(employee_dir, filename)
-            contract_doc.save(contract_filepath)
-            generated_docs['employment_contract'] = contract_filepath
+            local_filepath = os.path.join(employee_dir, filename)
+            contract_doc.save(local_filepath)
+            generated_docs['employment_contract'] = local_filepath
             
-            print(f"DEBUG: Employment Contract saved to: {contract_filepath}")
+            # Upload to Google Drive if available
+            if drive_service and employee_folder:
+                try:
+                    # Find Employment_Documents folder
+                    query = f"name='Employment_Documents' and mimeType='application/vnd.google-apps.folder' and '{employee_folder['id']}' in parents and trashed=false"
+                    results = drive_service.files().list(q=query, fields="files(id, name)").execute()
+                    target_folders = results.get('files', [])
+                    
+                    if target_folders:
+                        target_folder_id = target_folders[0]['id']
+                    else:
+                        target_folder = create_drive_folder(drive_service, 'Employment_Documents', employee_folder['id'])
+                        target_folder_id = target_folder['id']
+                    
+                    drive_file = upload_to_drive(drive_service, local_filepath, filename, target_folder_id)
+                    generated_docs['employment_contract_drive'] = drive_file.get('webViewLink')
+                    generated_docs['employment_contract_drive_id'] = drive_file.get('id')
+                    
+                    # Update the file path to use Drive URL for database storage
+                    generated_docs['employment_contract'] = drive_file.get('webViewLink')
+                    
+                except Exception as drive_error:
+                    print(f"Failed to upload Employment Contract to Google Drive: {str(drive_error)}")
+            
+            print(f"DEBUG: Employment Contract saved to: {local_filepath}")
         else:
             print(f"Warning: Contract template not found at {contract_template_path}")
         
     except Exception as e:
         print(f"Error generating Employment Contract: {str(e)}")
     
+    # Clean up temporary local directory
+    try:
+        import shutil
+        shutil.rmtree(employee_dir)
+        print(f"DEBUG: Cleaned up temporary directory: {employee_dir}")
+    except Exception as cleanup_error:
+        print(f"Warning: Could not clean up temporary directory: {str(cleanup_error)}")
+    
     return generated_docs
+
+def save_document_to_database(employee_id: int, document_type: str, file_path: str, uploaded_by: int, document_name: str, comments: str = None, expiry_date: datetime = None, drive_file_id: str = None) -> Optional[EmployeeDocument]:
+    """Save document record to database with Google Drive support"""
+    try:
+        document_type_mapping = {
+            'new_joiner_form': 'other',
+            'employment_contract': 'contract'
+        }
+        
+        db_document_type = document_type_mapping.get(document_type, 'other')
+        
+        document = EmployeeDocument(
+            employee_id=employee_id,
+            document_type=db_document_type,
+            document_name=document_name,
+            file_url=file_path,
+            file_drive_id=drive_file_id,
+            upload_date=datetime.now(),
+            uploaded_by=uploaded_by,
+            expiry_date=expiry_date,
+            is_verified=True,
+            verified_by=uploaded_by,
+            comments=comments or f"Automatically generated {document_name}",
+            created_at=datetime.now(),
+            updated_at=datetime.now()
+        )
+        
+        db.session.add(document)
+        db.session.flush()
+        print(f"DEBUG: Document saved to database: {document_name} with type: {db_document_type}")
+        return document
+        
+    except Exception as e:
+        print(f"Error saving document to database: {str(e)}")
+        db.session.rollback()
+        return None
 
 # ---------------------- SCHEMAS ---------------------- #
 class EmployeeResponseSchema(BaseModel):
@@ -465,7 +818,7 @@ class EmployeeCreateSchema(BaseModel):
     work_permit_valid_to: Optional[str] = Field(None, description="Work permit valid to date - required if identity_type is Work Permit")
     
     # Nationality field for conditional validation
-    nationality: str = Field("Zambia", description="Nationality of the employee")  # Changed default to "Zambia"
+    nationality: str = Field("Zambia", description="Nationality of the employee")
     
     gender: str = Field(..., description="Gender")
     phone: Optional[str] = Field(None, description="Phone")
@@ -585,7 +938,7 @@ class EmployeeCreateSchema(BaseModel):
         elif v_lower in ['contract']:
             return 'Contract'
         elif v_lower in ['fixed-term', 'fixed term', 'fixed_term']:
-            return 'Fixed-Term'  # This matches your database ENUM exactly
+            return 'Fixed-Term'
         elif v_lower in ['intern', 'internship']:
             return 'Intern'
         elif v_lower in ['apprentice', 'apprenticeship']:
@@ -636,7 +989,7 @@ class EmployeeCreateSchema(BaseModel):
         return self
 
     class Config:
-        extra = 'ignore'  # Ignore extra fields in the input
+        extra = 'ignore'
 
 class EmployeeUpdateSchema(BaseModel):
     first_name: Optional[str] = Field(None, min_length=1, description="First name")
@@ -714,7 +1067,7 @@ class EmployeeUpdateSchema(BaseModel):
         elif v_lower in ['contract']:
             return 'Contract'
         elif v_lower in ['fixed-term', 'fixed term', 'fixed_term']:
-            return 'Fixed-Term'  # This matches your database ENUM exactly
+            return 'Fixed-Term'
         elif v_lower in ['intern', 'internship']:
             return 'Intern'
         elif v_lower in ['apprentice', 'apprenticeship']:
@@ -724,7 +1077,6 @@ class EmployeeUpdateSchema(BaseModel):
         elif v_lower in ['probation']:
             return 'Probation'
         return v
-
 
 class DocumentGenerationResponse(BaseModel):
     employee_id: int = Field(..., description="Employee ID")
@@ -786,7 +1138,7 @@ def parse_date(date_str):
     # Handle Excel serial numbers
     try:
         excel_serial = float(date_str)
-        if 0 <= excel_serial <= 100000:  # Reasonable range for dates
+        if 0 <= excel_serial <= 100000:
             base_date = datetime(1899, 12, 30)
             parsed_date = base_date + timedelta(days=excel_serial)
             return parsed_date.date()
@@ -935,7 +1287,7 @@ def get_employees():
 )
 @jwt_required()
 def create_employee(body: EmployeeCreateSchema):
-    """Create a new employee with template-based document generation"""
+    """Create a new employee with Google Drive document storage"""
     try:
         current_user_id = get_jwt_identity()
         
@@ -988,10 +1340,8 @@ def create_employee(body: EmployeeCreateSchema):
                 }), 409
         
         # ========== CRITICAL FIX: VALIDATE NATIONALITY AND IDENTITY TYPE MATCH ==========
-        # Check if nationality and identity type match
         is_zambian = body.nationality and body.nationality.lower() in ['zambia', 'zambian']
         
-        # Validate identity type based on nationality
         if is_zambian and body.identity_type != 'NRC':
             return jsonify({
                 "status": 400,
@@ -1008,7 +1358,6 @@ def create_employee(body: EmployeeCreateSchema):
         
         # Check identity document uniqueness based on nationality and identity type
         if is_zambian:
-            # For Zambians, check national_id uniqueness
             if body.national_id:
                 existing_national_id = Employee.query.filter_by(national_id=body.national_id).first()
                 if existing_national_id:
@@ -1017,7 +1366,6 @@ def create_employee(body: EmployeeCreateSchema):
                         "isError": True,
                         "message": "An employee with this National ID already exists"
                     }), 409
-            # For Zambians, national_id should be provided
             if not body.national_id:
                 return jsonify({
                     "status": 400,
@@ -1025,7 +1373,6 @@ def create_employee(body: EmployeeCreateSchema):
                     "message": "National ID is required for Zambian employees"
                 }), 400
         else:
-            # For non-Zambians, check work permit uniqueness
             if body.work_permit_number:
                 existing_work_permit = Employee.query.filter_by(work_permit_number=body.work_permit_number).first()
                 if existing_work_permit:
@@ -1034,14 +1381,12 @@ def create_employee(body: EmployeeCreateSchema):
                         "isError": True,
                         "message": "An employee with this Work Permit Number already exists"
                     }), 409
-            # For non-Zambians, work_permit_number should be provided
             if not body.work_permit_number:
                 return jsonify({
                     "status": 400,
                     "isError": True,
                     "message": "Work Permit Number is required for non-Zambian employees"
                 }), 400
-            # For non-Zambians, work permit dates should be provided
             if not body.work_permit_valid_from or not body.work_permit_valid_to:
                 return jsonify({
                     "status": 400,
@@ -1049,21 +1394,19 @@ def create_employee(body: EmployeeCreateSchema):
                     "message": "Work Permit valid from and valid to dates are required for non-Zambian employees"
                 }), 400
 
-        # Parse dates using the updated parse_date function
+        # Parse dates
         date_of_birth = parse_date(body.date_of_birth)
         start_date = parse_date(body.start_date)
         end_date = parse_date(body.end_date) if body.end_date else None
         probation_end_date = parse_date(body.probation_end_date) if body.probation_end_date else None
         contract_end_date = parse_date(body.contract_end_date) if body.contract_end_date else None
         
-        # Parse work permit dates for non-Zambians
         work_permit_valid_from = None
         work_permit_valid_to = None
         if not is_zambian and body.identity_type == 'Work Permit':
             work_permit_valid_from = parse_date(body.work_permit_valid_from) if body.work_permit_valid_from else None
             work_permit_valid_to = parse_date(body.work_permit_valid_to) if body.work_permit_valid_to else None
 
-        # Handle null salary
         salary = body.salary if body.salary is not None else 0.0
 
         # Create employee
@@ -1104,7 +1447,7 @@ def create_employee(body: EmployeeCreateSchema):
             company_id=body.company_id,
             department=body.department,
             position=body.position,
-            employment_type=body.employment_type,  # This will now be properly normalized
+            employment_type=body.employment_type,
             employment_status=body.employment_status,
             start_date=start_date,
             end_date=end_date,
@@ -1123,22 +1466,24 @@ def create_employee(body: EmployeeCreateSchema):
         )
         
         db.session.add(employee)
-        db.session.flush()  # This gets the employee ID without committing
+        db.session.flush()
         
-        # ========== HANDLE UPLOADED DOCUMENTS ==========
+        # ========== UPDATED: HANDLE UPLOADED DOCUMENTS WITH GOOGLE DRIVE ==========
         if body.documents:
             try:
                 saved_documents = handle_employee_documents(
                     employee_id=employee.id,
                     documents_data=body.documents,
-                    uploaded_by=current_user_id
+                    uploaded_by=current_user_id,
+                    employee=employee,
+                    company=company
                 )
                 print(f"DEBUG: Saved {len(saved_documents)} documents for employee {employee.id}")
             except Exception as doc_error:
                 print(f"Warning: Document processing failed but employee created: {str(doc_error)}")
                 import traceback
                 print(f"Document error traceback: {traceback.format_exc()}")
-        # ========== END DOCUMENTS HANDLING ==========
+        # ========== END UPDATED DOCUMENTS HANDLING ==========
         
         # Generate template documents if requested
         if body.generate_documents:
@@ -1162,15 +1507,17 @@ def create_employee(body: EmployeeCreateSchema):
                 
                 generated_docs = generate_documents_from_templates(employee, company, documents_data)
                 
-                # Save documents to database
+                # Save documents to database with Google Drive support
                 if generated_docs.get('new_joiner_form'):
+                    drive_file_id = generated_docs.get('new_joiner_form_drive_id')
                     save_document_to_database(
                         employee_id=employee.id,
                         document_type='new_joiner_form',
                         file_path=generated_docs['new_joiner_form'],
                         uploaded_by=current_user_id,
                         document_name=f"New Joiner Form - {employee.first_name} {employee.last_name}",
-                        comments="Employee onboarding form with personal and employment details"
+                        comments="Employee onboarding form with personal and employment details",
+                        drive_file_id=drive_file_id
                     )
                 
                 if generated_docs.get('employment_contract'):
@@ -1180,6 +1527,7 @@ def create_employee(body: EmployeeCreateSchema):
                     elif employee.start_date:
                         expiry_date = employee.start_date + timedelta(days=365)
                     
+                    drive_file_id = generated_docs.get('employment_contract_drive_id')
                     save_document_to_database(
                         employee_id=employee.id,
                         document_type='employment_contract',
@@ -1187,7 +1535,8 @@ def create_employee(body: EmployeeCreateSchema):
                         uploaded_by=current_user_id,
                         document_name=f"Employment Contract - {employee.first_name} {employee.last_name}",
                         comments="Formal employment agreement with terms and conditions",
-                        expiry_date=expiry_date
+                        expiry_date=expiry_date,
+                        drive_file_id=drive_file_id
                     )
                     
             except Exception as doc_error:
@@ -1207,7 +1556,7 @@ def create_employee(body: EmployeeCreateSchema):
             employee_id=employee.id,
             action="CREATE",
             performed_by=current_user_id,
-            details=f"Employee {employee.employee_id} created successfully with nationality: {employee.nationality}, identity type: {employee.identity_type}"
+            details=f"Employee {employee.employee_id} created successfully with nationality: {employee.nationality}, identity type: {employee.identity_type}. Documents stored in Google Drive."
         )
         db.session.add(audit)
         db.session.commit()
@@ -1228,7 +1577,6 @@ def create_employee(body: EmployeeCreateSchema):
             "isError": True,
             "message": f"Error creating employee: {str(e)}"
         }), 500
-
 
 @employee_bp.get('/documents/<path:filename>')
 @jwt_required()
@@ -1470,13 +1818,15 @@ def generate_employee_documents(path: EmployeeIdPath):
         contract_url = None
         
         if generated_docs.get('new_joiner_form'):
+            drive_file_id = generated_docs.get('new_joiner_form_drive_id')
             new_joiner_doc = save_document_to_database(
                 employee_id=employee.id,
                 document_type='new_joiner_form',
                 file_path=generated_docs['new_joiner_form'],
                 uploaded_by=current_user_id,
                 document_name=f"New Joiner Form - {employee.first_name} {employee.last_name}",
-                comments="Employee onboarding form with personal and employment details"
+                comments="Employee onboarding form with personal and employment details",
+                drive_file_id=drive_file_id
             )
             if new_joiner_doc:
                 new_joiner_url = new_joiner_doc.file_url
@@ -1490,6 +1840,7 @@ def generate_employee_documents(path: EmployeeIdPath):
                 # Default 1-year contract if no end date specified
                 expiry_date = employee.start_date + timedelta(days=365)
             
+            drive_file_id = generated_docs.get('employment_contract_drive_id')
             contract_doc = save_document_to_database(
                 employee_id=employee.id,
                 document_type='employment_contract',
@@ -1497,7 +1848,8 @@ def generate_employee_documents(path: EmployeeIdPath):
                 uploaded_by=current_user_id,
                 document_name=f"Employment Contract - {employee.first_name} {employee.last_name}",
                 comments="Formal employment agreement with terms and conditions",
-                expiry_date=expiry_date
+                expiry_date=expiry_date,
+                drive_file_id=drive_file_id
             )
             if contract_doc:
                 contract_url = contract_doc.file_url
@@ -1524,7 +1876,7 @@ def generate_employee_documents(path: EmployeeIdPath):
 )
 @jwt_required()
 def bulk_create_employees(body: BulkEmployeeCreateSchema):
-    """Bulk create multiple employees with optional document handling"""
+    """Bulk create multiple employees with Google Drive document handling"""
     try:
         current_user_id = get_jwt_identity()
         
@@ -1725,15 +2077,17 @@ def bulk_create_employees(body: BulkEmployeeCreateSchema):
                 )
                 
                 db.session.add(employee)
-                db.session.flush()  # Get the employee ID without committing
+                db.session.flush()
                 
-                # Handle uploaded documents if provided
+                # Handle uploaded documents if provided with Google Drive
                 if employee_data.documents:
                     try:
                         saved_documents = handle_employee_documents(
                             employee_id=employee.id,
                             documents_data=employee_data.documents,
-                            uploaded_by=current_user_id
+                            uploaded_by=current_user_id,
+                            employee=employee,
+                            company=company
                         )
                         print(f"DEBUG: Saved {len(saved_documents)} documents for employee {employee.id}")
                     except Exception as doc_error:
@@ -1762,15 +2116,17 @@ def bulk_create_employees(body: BulkEmployeeCreateSchema):
                         
                         generated_docs = generate_documents_from_templates(employee, company, documents_data)
                         
-                        # Save documents to database
+                        # Save documents to database with Google Drive support
                         if generated_docs.get('new_joiner_form'):
+                            drive_file_id = generated_docs.get('new_joiner_form_drive_id')
                             save_document_to_database(
                                 employee_id=employee.id,
                                 document_type='new_joiner_form',
                                 file_path=generated_docs['new_joiner_form'],
                                 uploaded_by=current_user_id,
                                 document_name=f"New Joiner Form - {employee.first_name} {employee.last_name}",
-                                comments="Employee onboarding form with personal and employment details"
+                                comments="Employee onboarding form with personal and employment details",
+                                drive_file_id=drive_file_id
                             )
                         
                         if generated_docs.get('employment_contract'):
@@ -1780,6 +2136,7 @@ def bulk_create_employees(body: BulkEmployeeCreateSchema):
                             elif employee.start_date:
                                 expiry_date = employee.start_date + timedelta(days=365)
                             
+                            drive_file_id = generated_docs.get('employment_contract_drive_id')
                             save_document_to_database(
                                 employee_id=employee.id,
                                 document_type='employment_contract',
@@ -1787,7 +2144,8 @@ def bulk_create_employees(body: BulkEmployeeCreateSchema):
                                 uploaded_by=current_user_id,
                                 document_name=f"Employment Contract - {employee.first_name} {employee.last_name}",
                                 comments="Formal employment agreement with terms and conditions",
-                                expiry_date=expiry_date
+                                expiry_date=expiry_date,
+                                drive_file_id=drive_file_id
                             )
                             
                     except Exception as doc_error:
@@ -1805,7 +2163,7 @@ def bulk_create_employees(body: BulkEmployeeCreateSchema):
                     employee_id=employee.id,
                     action="CREATE",
                     performed_by=current_user_id,
-                    details=f"Employee {employee.employee_id} created via bulk upload with nationality: {employee.nationality}, identity type: {employee.identity_type}"
+                    details=f"Employee {employee.employee_id} created via bulk upload with nationality: {employee.nationality}, identity type: {employee.identity_type}. Documents stored in Google Drive."
                 )
                 db.session.add(audit)
                 
